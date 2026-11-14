@@ -25,6 +25,7 @@ import dem from '../../data/jezeroDem.json'
 import { useMissionData } from '../../hooks/useMissionData'
 import { apiTargetToScienceTarget, missionApi } from '../../services/missionApi'
 import type { ApiHazard } from '../../types/mission'
+import { mergeMissionTargets } from '../../utils/missionLocations'
 
 interface MarsMapProps { large?: boolean; showLegend?: boolean }
 
@@ -174,7 +175,7 @@ function makeMarkerLayer(targets: ScienceTarget[], habitatPosition: [number, num
 
 export function MarsMap({ large = false, showLegend = true }: MarsMapProps) {
   const { site, siteId, targets: apiTargets, hazards: apiHazards } = useMissionData()
-  const mapTargets = useMemo(() => site && apiTargets.data ? apiTargets.data.items.map((item) => apiTargetToScienceTarget(item, site)) : scienceTargets, [site, apiTargets.data])
+  const mapTargets = useMemo(() => mergeMissionTargets(site && apiTargets.data ? apiTargets.data.items.map((item) => apiTargetToScienceTarget(item, site)) : [], scienceTargets), [site, apiTargets.data])
   const habitatPosition: [number, number] = site ? [site.habitat_location.x_m, site.habitat_location.y_m] : demoMission.habitatPosition
   const targetRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<Map | null>(null)

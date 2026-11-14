@@ -8,7 +8,7 @@ export interface ScienceTarget {
   description: string
   objective: string
   status: 'PLANNED' | 'IN PROGRESS' | 'COMPLETE'
-  source?: 'MISSION DEMO' | 'NASA MISSION AREA' | 'CUSTOM COORDINATE'
+  source?: 'BACKEND MISSION' | 'MISSION DEMO' | 'NASA MISSION AREA' | 'CUSTOM COORDINATE'
   coordinates?: [number, number]
 }
 

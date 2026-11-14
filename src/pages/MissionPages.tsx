@@ -27,6 +27,7 @@ import type { MissionRoute } from "../types/mission";
 import { useQuery } from "@tanstack/react-query";
 import { useMissionData } from "../hooks/useMissionData";
 import { apiTargetToScienceTarget, missionApi } from "../services/missionApi";
+import { mergeMissionTargets } from "../utils/missionLocations";
 
 export function MarsExplorer() {
   return (
@@ -194,7 +195,7 @@ export function ScienceObjectives() {
   const { site, targets: apiTargets } = useMissionData();
   const selectedId = useMissionStore((state) => state.selectedScienceId);
   const selectScience = useMissionStore((state) => state.selectScience);
-  const targetList = site && apiTargets.data ? apiTargets.data.items.map((target) => apiTargetToScienceTarget(target, site)) : scienceTargets;
+  const targetList = mergeMissionTargets(site && apiTargets.data ? apiTargets.data.items.map((target) => apiTargetToScienceTarget(target, site)) : [], scienceTargets);
   return (
     <div className="page-wrap">
       <PageHeading

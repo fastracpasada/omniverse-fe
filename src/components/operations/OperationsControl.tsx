@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Activity, AlertTriangle, Battery, Clock3, Footprints, Gauge, Pause, Plane, Play, Radio, RotateCcw, ShieldCheck, Truck } from 'lucide-react'
 import { MarsMap } from '../map/MarsMap'
 import { initialTelemetry, scienceTargets } from '../../data/demoMission'
 import { useMissionStore } from '../../stores/missionStore'
 import { useMutation } from '@tanstack/react-query'
-import { missionApi } from '../../services/missionApi'
+import { apiTargetToScienceTarget, missionApi } from '../../services/missionApi'
 import { useMissionData } from '../../hooks/useMissionData'
+import { mergeMissionTargets } from '../../utils/missionLocations'
 
 const modes = {
   walk: { label: 'Walking EVA', short: 'EVA', icon: Footprints, operator: 'Astronaut R. Chen', system: 'Suit and crew telemetry', accent: 'cyan' },
@@ -14,7 +15,7 @@ const modes = {
 } as const
 
 export function OperationsControl() {
-  const { apiConnected } = useMissionData()
+  const { apiConnected, site, targets: apiTargets } = useMissionData()
   const elapsed = useMissionStore((state) => state.telemetryElapsedSeconds)
   const running = useMissionStore((state) => state.simulationRunning)
   const setRunning = useMissionStore((state) => state.setSimulationRunning)
@@ -32,7 +33,8 @@ export function OperationsControl() {
   const startBackend = useMutation({ mutationFn: () => missionApi.startSimulation(savedRouteId!), onSuccess: ({ session }) => { setBackendSimulation(session); setRunning(session.status === 'running'); setNotice('Backend EVA session started') }, onError: (error) => setNotice(error.message) })
   const controlBackend = useMutation({ mutationFn: async (action: 'pause' | 'resume' | 'advance') => { if (!backendSimulation) throw new Error('Start the backend EVA session first.'); return action === 'pause' ? missionApi.pauseSimulation(backendSimulation.id) : action === 'resume' ? missionApi.resumeSimulation(backendSimulation.id) : missionApi.advanceSimulation(backendSimulation.id) }, onSuccess: (session) => { setBackendSimulation(session); setRunning(session.status === 'running'); setNotice(`Backend EVA ${session.status}`) }, onError: (error) => setNotice(error.message) })
   const resetBackend = useMutation({ mutationFn: async () => { if (backendSimulation) await missionApi.resetSimulation(backendSimulation.id) }, onSuccess: () => { setBackendSimulation(null); reset(); setNotice('Backend EVA session reset') }, onError: (error) => setNotice(error.message) })
-  const target = (customDestination?.id === selectedId ? customDestination : scienceTargets.find((item) => item.id === selectedId)) ?? scienceTargets[0]
+  const targetList = useMemo(() => mergeMissionTargets(site && apiTargets.data ? apiTargets.data.items.map((item) => apiTargetToScienceTarget(item, site)) : [], scienceTargets), [site, apiTargets.data])
+  const target = (customDestination?.id === selectedId ? customDestination : targetList.find((item) => item.id === selectedId)) ?? targetList[0]
   const active = modes[mode]
   const Icon = active.icon
 
