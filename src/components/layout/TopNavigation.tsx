@@ -2,8 +2,10 @@ import { useState } from 'react'
 import { Check, CircleDot, Monitor, Moon, SlidersHorizontal, Sun } from 'lucide-react'
 import { demoMission } from '../../data/demoMission'
 import { useMissionStore } from '../../stores/missionStore'
+import { useMissionData } from '../../hooks/useMissionData'
 
 export function TopNavigation() {
+  const { health, site, apiConnected } = useMissionData()
   const [displayOpen, setDisplayOpen] = useState(false)
   const colorMode = useMissionStore((state) => state.colorMode)
   const textSize = useMissionStore((state) => state.textSize)
@@ -16,10 +18,10 @@ export function TopNavigation() {
         <div className="brand-mark mars-logo" role="img" aria-label="Rotating Mars globe"><span /></div>
         <div><div className="brand-name">MARS-NAV</div><div className="brand-subtitle">Mission companion</div></div>
       </div>
-      <div className="topbar-site"><span className="eyebrow">Exploration site</span><span className="site-name">{demoMission.site}</span></div>
+      <div className="topbar-site"><span className="eyebrow">Exploration site</span><span className="site-name">{site?.name ?? demoMission.site}</span></div>
       <div className="topbar-right">
-        <span className="top-indicator"><span className="status-dot" /> Systems normal</span>
-        <span className="demo-badge">DEMO</span>
+        <span className="top-indicator"><span className="status-dot" style={{ background: apiConnected ? 'var(--green)' : 'var(--amber)' }} /> {apiConnected ? 'Backend connected' : health.isLoading ? 'Connecting backend' : 'Local fallback'}</span>
+        <span className="demo-badge">{site?.is_demo ? 'API DEMO' : 'DEMO'}</span>
         <div className="display-menu-wrap">
           <button className="display-trigger" onClick={() => setDisplayOpen(!displayOpen)} aria-expanded={displayOpen} aria-haspopup="dialog"><SlidersHorizontal size={15} /><span>Display</span></button>
           {displayOpen && <div className="display-popover" role="dialog" aria-label="Display preferences">

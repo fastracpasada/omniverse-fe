@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { initialLayers, initialTelemetry } from '../data/demoMission'
-import type { MapLayerDefinition } from '../types/mission'
+import type { ApiMission, ApiPlannedRoute, ApiSimulationState, MapLayerDefinition } from '../types/mission'
 import type { ScienceTarget } from '../types/mission'
 
 interface MissionState {
@@ -18,6 +18,10 @@ interface MissionState {
   simulationRunning: boolean
   selectedRouteId: string
   routeGenerated: boolean
+  currentMission: ApiMission | null
+  backendRoutes: ApiPlannedRoute[]
+  savedRouteId: string | null
+  simulation: ApiSimulationState | null
   toggleSidebar: () => void
   selectScience: (id: string) => void
   setCustomDestination: (target: ScienceTarget) => void
@@ -33,6 +37,10 @@ interface MissionState {
   setTextSize: (size: 'compact' | 'default' | 'large') => void
   setTravelMode: (mode: 'walk' | 'rover' | 'air') => void
   setRouteProfile: (profile: 'safe' | 'fast') => void
+  setCurrentMission: (mission: ApiMission | null) => void
+  setBackendRoutes: (routes: ApiPlannedRoute[]) => void
+  setSavedRouteId: (id: string | null) => void
+  setSimulation: (simulation: ApiSimulationState | null) => void
 }
 
 export const useMissionStore = create<MissionState>((set) => ({
@@ -50,6 +58,10 @@ export const useMissionStore = create<MissionState>((set) => ({
   simulationRunning: false,
   selectedRouteId: 'ROUTE-A',
   routeGenerated: false,
+  currentMission: null,
+  backendRoutes: [],
+  savedRouteId: null,
+  simulation: null,
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
   selectScience: (id) => set({ selectedScienceId: id, customDestination: null }),
   setCustomDestination: (customDestination) => set({ customDestination, selectedScienceId: customDestination.id }),
@@ -65,4 +77,8 @@ export const useMissionStore = create<MissionState>((set) => ({
   setTextSize: (textSize) => set({ textSize }),
   setTravelMode: (travelMode) => set({ travelMode }),
   setRouteProfile: (routeProfile) => set({ routeProfile }),
+  setCurrentMission: (currentMission) => set({ currentMission }),
+  setBackendRoutes: (backendRoutes) => set({ backendRoutes }),
+  setSavedRouteId: (savedRouteId) => set({ savedRouteId }),
+  setSimulation: (simulation) => set({ simulation }),
 }))

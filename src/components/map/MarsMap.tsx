@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Map from 'ol/Map'
 import View from 'ol/View'
 import Feature from 'ol/Feature'
@@ -22,6 +22,9 @@ import type { ScienceTarget } from '../../types/mission'
 import { inspectTerrain, terrainDataLabel, terrainRoute } from '../../utils/terrainRouting'
 import type { RouteProfile } from '../../utils/terrainRouting'
 import dem from '../../data/jezeroDem.json'
+import { useMissionData } from '../../hooks/useMissionData'
+import { apiTargetToScienceTarget, missionApi } from '../../services/missionApi'
+import type { ApiHazard } from '../../types/mission'
 
 interface MarsMapProps { large?: boolean; showLegend?: boolean }
 
@@ -97,19 +100,23 @@ function makeTerrainLayer() {
   })
 }
 
-function makeHazardLayer() {
+function makeHazardLayer(apiHazards: ApiHazard[]) {
+  if (apiHazards.length) {
+    const features = apiHazards.map((item) => { const feature = new Feature(new Polygon([item.geometry.exterior.map(localMetresToMars)])); feature.setProperties({ kind: 'hazard', name: item.name, risk: item.risk_score }); return feature })
+    return new VectorLayer({ source: new VectorSource({ features }), style: new Style({ fill: new Fill({ color: 'rgba(216,115,107,.22)' }), stroke: new Stroke({ color: '#D8736B', width: 1.5, lineDash: [6, 5] }) }) })
+  }
   const hazardCoordinates: [number, number][] = [[1700, 3500], [3600, 4400], [5000, 3000], [4100, 1700], [2400, 1900], [1700, 3500]]
   const hazard = new Feature(new Polygon([hazardCoordinates.map(localMetresToMars)]))
   hazard.set('kind', 'hazard')
   return new VectorLayer({ source: new VectorSource({ features: [hazard] }), style: new Style({ fill: new Fill({ color: 'rgba(249, 115, 22, .18)' }), stroke: new Stroke({ color: 'rgba(255, 160, 92, .75)', width: 1.5, lineDash: [6, 5] }) }) })
 }
 
-function selectedTarget(targetId: string, customDestination: ScienceTarget | null) {
-  return customDestination?.id === targetId ? customDestination : scienceTargets.find((item) => item.id === targetId) ?? scienceTargets[0]
+function selectedTarget(targetId: string, customDestination: ScienceTarget | null, targets: ScienceTarget[]) {
+  return customDestination?.id === targetId ? customDestination : targets.find((item) => item.id === targetId) ?? targets[0]
 }
 
-function makeTravelFeatures(targetId: string, customDestination: ScienceTarget | null, origin: ScienceTarget, profile: RouteProfile) {
-  const target = selectedTarget(targetId, customDestination)
+function makeTravelFeatures(targetId: string, customDestination: ScienceTarget | null, origin: ScienceTarget, profile: RouteProfile, targets: ScienceTarget[]) {
+  const target = selectedTarget(targetId, customDestination, targets)
   const [x, y] = target.localPosition
   const [originX, originY] = origin.localPosition
   const paths: Record<'walk' | 'rover' | 'air', [number, number][]> = {
@@ -117,6 +124,9 @@ function makeTravelFeatures(targetId: string, customDestination: ScienceTarget |
     rover: terrainRoute([originX, originY], [x, y], 'rover', profile),
     air: [[originX, originY], [x, y]],
   }
+  const backendProfile = profile === 'safe' ? 'safety_first' : 'shorter_distance'
+  const backendWalk = useMissionStore.getState().backendRoutes.find((route) => route.profile === backendProfile && route.status !== 'no_route')
+  if (backendWalk?.geometry.coordinates.length) paths.walk = backendWalk.geometry.coordinates
   return (Object.keys(paths) as Array<keyof typeof paths>).filter((mode) => paths[mode].length > 0).map((mode) => {
     const feature = new Feature(new LineString(paths[mode].map(localMetresToMars)))
     feature.set('travelMode', mode)
@@ -124,9 +134,9 @@ function makeTravelFeatures(targetId: string, customDestination: ScienceTarget |
   })
 }
 
-function makeRouteLayer() {
+function makeRouteLayer(targets: ScienceTarget[]) {
   return new VectorLayer({
-    source: new VectorSource({ features: makeTravelFeatures(useMissionStore.getState().selectedScienceId, useMissionStore.getState().customDestination, useMissionStore.getState().routeOrigin, useMissionStore.getState().routeProfile) }),
+    source: new VectorSource({ features: makeTravelFeatures(useMissionStore.getState().selectedScienceId, useMissionStore.getState().customDestination, useMissionStore.getState().routeOrigin, useMissionStore.getState().routeProfile, targets) }),
     style: (feature) => {
       const mode = feature.get('travelMode') as 'walk' | 'rover' | 'air'
       const selected = mode === useMissionStore.getState().travelMode
@@ -136,10 +146,10 @@ function makeRouteLayer() {
   })
 }
 
-function makeMarkerLayer(customDestination: ScienceTarget | null = null, origin: ScienceTarget = useMissionStore.getState().routeOrigin) {
+function makeMarkerLayer(targets: ScienceTarget[], habitatPosition: [number, number], customDestination: ScienceTarget | null = null, origin: ScienceTarget = useMissionStore.getState().routeOrigin) {
   const markers = [
-    { id: 'habitat', label: 'HAB-01', coordinate: demoMission.habitatPosition, kind: 'habitat' },
-    ...scienceTargets.map((target) => ({ id: target.id, label: target.name, coordinate: target.localPosition, kind: 'science' })),
+    { id: 'habitat', label: 'HAB-01', coordinate: habitatPosition, kind: 'habitat' },
+    ...targets.map((target) => ({ id: target.id, label: target.name, coordinate: target.localPosition, kind: 'science' })),
     ...(customDestination && customDestination.id !== 'habitat' ? [{ id: customDestination.id, label: 'Custom destination', coordinate: customDestination.localPosition, kind: 'custom' }] : []),
     ...(origin.id !== 'habitat' ? [{ id: `origin-${origin.id}`, label: `FROM · ${origin.name}`, coordinate: origin.localPosition, kind: 'origin' }] : []),
   ]
@@ -163,18 +173,22 @@ function makeMarkerLayer(customDestination: ScienceTarget | null = null, origin:
 }
 
 export function MarsMap({ large = false, showLegend = true }: MarsMapProps) {
+  const { site, siteId, targets: apiTargets, hazards: apiHazards } = useMissionData()
+  const mapTargets = useMemo(() => site && apiTargets.data ? apiTargets.data.items.map((item) => apiTargetToScienceTarget(item, site)) : scienceTargets, [site, apiTargets.data])
+  const habitatPosition: [number, number] = site ? [site.habitat_location.x_m, site.habitat_location.y_m] : demoMission.habitatPosition
   const targetRef = useRef<HTMLDivElement>(null)
   const mapRef = useRef<Map | null>(null)
   const mapShellRef = useRef<HTMLDivElement>(null)
   const [coordinate, setCoordinate] = useState('18.40000° N · 77.50000° E')
   const [mapTheme, setMapTheme] = useState<'schematic' | 'realistic'>('realistic')
-  const [terrainInspection, setTerrainInspection] = useState<{ elevationM: number; slopeDeg: number; classification: string } | null>(null)
+  const [terrainInspection, setTerrainInspection] = useState<{ elevationM: number; slopeDeg: number; classification: string; source?: string } | null>(null)
   const layers = useMissionStore((state) => state.layers)
   const selectedScienceId = useMissionStore((state) => state.selectedScienceId)
   const travelMode = useMissionStore((state) => state.travelMode)
   const customDestination = useMissionStore((state) => state.customDestination)
   const routeOrigin = useMissionStore((state) => state.routeOrigin)
   const routeProfile = useMissionStore((state) => state.routeProfile)
+  const backendRoutes = useMissionStore((state) => state.backendRoutes)
   const setCoordinateStore = useMissionStore((state) => state.setCoordinate)
   const selectScience = useMissionStore((state) => state.selectScience)
   const setCustomDestination = useMissionStore((state) => state.setCustomDestination)
@@ -185,9 +199,9 @@ export function MarsMap({ large = false, showLegend = true }: MarsMapProps) {
     const elevationLayer = makeDemLayer('elevation')
     const slopeLayer = makeDemLayer('slope')
     const terrainLayer = makeTerrainLayer()
-    const hazardLayer = makeHazardLayer()
-    const routeLayer = makeRouteLayer()
-    const markerLayer = makeMarkerLayer()
+    const hazardLayer = makeHazardLayer(apiHazards.data?.items ?? [])
+    const routeLayer = makeRouteLayer(mapTargets)
+    const markerLayer = makeMarkerLayer(mapTargets, habitatPosition)
     const map = new Map({
       target: targetRef.current,
       layers: [realisticLayer, elevationLayer, slopeLayer, terrainLayer, hazardLayer, routeLayer, markerLayer],
@@ -208,7 +222,9 @@ export function MarsMap({ large = false, showLegend = true }: MarsMapProps) {
       else if (id !== 'habitat') {
         const [longitude, latitude] = event.coordinate
         const localPosition = marsToLocalMetres([longitude, latitude])
-        setTerrainInspection(inspectTerrain(localPosition))
+        const localSample = inspectTerrain(localPosition)
+        setTerrainInspection({ elevationM: localSample?.elevationM ?? 0, slopeDeg: localSample?.slopeDeg ?? 0, classification: localSample?.classification ?? 'outside local terrain coverage', source: 'Local CTX grid' })
+        if (siteId) void missionApi.getTerrainSample(siteId, { x_m: localPosition[0], y_m: localPosition[1] }).then((sample) => { const value = sample as { elevation_m?: number; slope_deg?: number; terrain_category?: string; risk_score?: number }; setTerrainInspection({ elevationM: Number(value.elevation_m ?? 0), slopeDeg: Number(value.slope_deg ?? 0), classification: `${value.terrain_category ?? 'backend sample'} · risk ${Number(value.risk_score ?? 0).toFixed(2)}`, source: 'Backend terrain sample' }) }).catch(() => undefined)
         const distanceKm = Math.hypot(...localPosition) / 1000
         setCustomDestination({ id: `CUSTOM-${latitude.toFixed(5)}-${longitude.toFixed(5)}`, name: 'Custom map point', category: 'Map-selected coordinate', localPosition, coordinates: [longitude, latitude], distanceKm, risk: distanceKm > 8 ? 'ELEVATED' : distanceKm > 2 ? 'MODERATE' : 'LOW', description: `Selected at ${latitude.toFixed(5)}°, ${longitude.toFixed(5)}°. Terrain and route safety have not been validated.`, objective: 'Explore custom map point', status: 'PLANNED', source: 'CUSTOM COORDINATE' })
         const label = `${latitude.toFixed(5)}° N · ${longitude.toFixed(5)}° E`
@@ -220,7 +236,7 @@ export function MarsMap({ large = false, showLegend = true }: MarsMapProps) {
     const resizeObserver = new ResizeObserver(() => map.updateSize())
     resizeObserver.observe(targetRef.current)
     return () => { resizeObserver.disconnect(); map.setTarget(undefined); mapRef.current = null }
-  }, [setCoordinateStore, selectScience, setCustomDestination])
+  }, [setCoordinateStore, selectScience, setCustomDestination, site, siteId, apiTargets.data, apiHazards.data])
 
   useEffect(() => {
     const map = mapRef.current
@@ -234,12 +250,12 @@ export function MarsMap({ large = false, showLegend = true }: MarsMapProps) {
     terrain.setVisible(mapTheme === 'schematic')
     hazards.setVisible(isVisible('hazards'))
     route.setVisible(isVisible('route'))
-    route.setSource(new VectorSource({ features: makeTravelFeatures(selectedScienceId, customDestination, routeOrigin, routeProfile) }))
-    const markerFeatures = makeMarkerLayer(customDestination, routeOrigin).getSource()?.getFeatures() ?? []
+    route.setSource(new VectorSource({ features: makeTravelFeatures(selectedScienceId, customDestination, routeOrigin, routeProfile, mapTargets) }))
+    const markerFeatures = makeMarkerLayer(mapTargets, habitatPosition, customDestination, routeOrigin).getSource()?.getFeatures() ?? []
     ;(markers as VectorLayer<VectorSource>).setSource(new VectorSource({ features: markerFeatures }))
     markers.setVisible(true)
     map.render()
-  }, [layers, selectedScienceId, travelMode, mapTheme, customDestination, routeOrigin, routeProfile])
+  }, [layers, selectedScienceId, travelMode, mapTheme, customDestination, routeOrigin, routeProfile, backendRoutes, site, apiTargets.data])
 
   const zoomBy = (delta: number) => {
     const view = mapRef.current?.getView()
@@ -266,7 +282,7 @@ export function MarsMap({ large = false, showLegend = true }: MarsMapProps) {
       {showLegend && <div className="map-legend"><span className="legend-item"><span className="legend-dot" style={{ background: 'var(--orange)' }} />Habitat</span><span className="legend-item"><span className="legend-dot" style={{ background: 'var(--cyan)' }} />Target</span><span className="legend-item"><span className="legend-line route-walk" />Walk</span><span className="legend-item"><span className="legend-line route-rover" />Rover</span><span className="legend-item"><span className="legend-line route-air" />Flight</span></div>}
       <div className="map-unverified">{mapTheme === 'realistic' ? 'NASA MARS TREK · MRO CTX JEZERO MOSAIC' : 'SCHEMATIC TERRAIN'} · DEM ROUTING</div>
       <div className="map-coordinate">{coordinate}</div>
-      {terrainInspection && <div className="terrain-inspection"><span>SELECTED TERRAIN</span><strong>{terrainInspection.elevationM.toFixed(0)} m elevation</strong><small>{terrainInspection.slopeDeg.toFixed(1)}° slope · {terrainInspection.classification}</small></div>}
+      {terrainInspection && <div className="terrain-inspection"><span>SELECTED TERRAIN · {terrainInspection.source}</span><strong>{terrainInspection.elevationM.toFixed(0)} m elevation</strong><small>{terrainInspection.slopeDeg.toFixed(1)}° slope · {terrainInspection.classification}</small></div>}
     </div>
     <div className="map-meta"><span>Surface paths use slope and hazard costs · flight remains direct</span><span>{terrainDataLabel}</span></div>
   </div>

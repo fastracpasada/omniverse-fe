@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Activity, AlertTriangle, Battery, CheckCircle2, Clock3, Footprints, MapPin, Navigation, PackageCheck, Plane, Search, ShieldCheck, Truck } from 'lucide-react'
 import { MarsMap } from '../components/map/MarsMap'
 import { demoMission, environmentalContext, initialTelemetry, scienceTargets } from '../data/demoMission'
@@ -7,6 +7,9 @@ import { marsToLocalMetres } from '../utils/marsProjection'
 import type { ScienceTarget } from '../types/mission'
 import { MarsWeatherBrief } from '../components/weather/MarsWeatherBrief'
 import { planTerrainRoute } from '../utils/terrainRouting'
+import { useMutation } from '@tanstack/react-query'
+import { useMissionData } from '../hooks/useMissionData'
+import { apiTargetToScienceTarget, missionApi } from '../services/missionApi'
 
 type TravelMode = 'walk' | 'rover' | 'air'
 
@@ -35,6 +38,7 @@ function coordinateTarget(query: string): ScienceTarget | null {
 }
 
 export function MissionOverview() {
+  const { site, siteId, targets: apiTargets, apiConnected } = useMissionData()
   const selectedId = useMissionStore((state) => state.selectedScienceId)
   const selectScience = useMissionStore((state) => state.selectScience)
   const customDestination = useMissionStore((state) => state.customDestination)
@@ -50,15 +54,23 @@ export function MissionOverview() {
   const routePreference = useMissionStore((state) => state.routeProfile)
   const setRoutePreference = useMissionStore((state) => state.setRouteProfile)
   const [planConfirmed, setPlanConfirmed] = useState(false)
-  const target = (customDestination?.id === selectedId ? customDestination : scienceTargets.find((item) => item.id === selectedId)) ?? scienceTargets[2]
+  const setCurrentMission = useMissionStore((state) => state.setCurrentMission)
+  const setBackendRoutes = useMissionStore((state) => state.setBackendRoutes)
+  const setSavedRouteId = useMissionStore((state) => state.setSavedRouteId)
+  const backendTargets = site && apiTargets.data ? apiTargets.data.items.map((item) => apiTargetToScienceTarget(item, site)) : []
+  const targetList = backendTargets.length ? backendTargets : scienceTargets
+  const activeHabitat: ScienceTarget = site ? { ...habitatTarget, name: 'HAB-01 Habitat', localPosition: [site.habitat_location.x_m, site.habitat_location.y_m], description: site.local_frame_description, source: 'MISSION DEMO' } : habitatTarget
+  useEffect(() => { if (backendTargets.length && !backendTargets.some((item) => item.id === selectedId) && customDestination?.id !== selectedId) selectScience(backendTargets[0].id) }, [backendTargets, selectedId, customDestination, selectScience])
+  useEffect(() => { if (site && routeOrigin.id === 'habitat' && (routeOrigin.localPosition[0] !== site.habitat_location.x_m || routeOrigin.localPosition[1] !== site.habitat_location.y_m)) { setRouteOrigin(activeHabitat); setOriginQuery(activeHabitat.name) } }, [site, routeOrigin, setRouteOrigin, activeHabitat])
+  const target = (customDestination?.id === selectedId ? customDestination : targetList.find((item) => item.id === selectedId)) ?? targetList[0]
   const tripDistanceKm = Math.hypot(target.localPosition[0] - routeOrigin.localPosition[0], target.localPosition[1] - routeOrigin.localPosition[1]) / 1000
   const routeResult = useMemo(() => mode === 'air' ? null : planTerrainRoute(routeOrigin.localPosition, target.localPosition, mode, routePreference), [mode, routeOrigin, target, routePreference])
   const routeDistanceKm = mode === 'air' ? tripDistanceKm : routeResult?.status === 'ok' ? routeResult.distanceM / 1000 : 0
   const suggestedMode = recommendation(tripDistanceKm, target.risk)
   const parsedCoordinate = coordinateTarget(query)
   const parsedOriginCoordinate = coordinateTarget(originQuery)
-  const filteredTargets = [habitatTarget, ...scienceTargets].filter((item) => `${item.name} ${item.category}`.toLowerCase().includes(query.toLowerCase()))
-  const originChoices = [habitatTarget, ...scienceTargets].filter((item) => `${item.name} ${item.category}`.toLowerCase().includes(originQuery.toLowerCase()))
+  const filteredTargets = [activeHabitat, ...targetList].filter((item) => `${item.name} ${item.category}`.toLowerCase().includes(query.toLowerCase()))
+  const originChoices = [activeHabitat, ...targetList].filter((item) => `${item.name} ${item.category}`.toLowerCase().includes(originQuery.toLowerCase()))
   const oxygen = Math.max(0, initialTelemetry.oxygenPercent - Math.floor((elapsed - initialTelemetry.elapsedSeconds) / 90))
   const estimate = useMemo(() => {
     const activeMode = modes[mode]
@@ -76,10 +88,25 @@ export function MissionOverview() {
   const walkingUnavailable = tripDistanceKm > 2
   const routeUnavailable = mode !== 'air' && routeResult?.status !== 'ok'
   const readiness = !routeUnavailable && !(mode === 'walk' && walkingUnavailable) && estimate.oxygen < oxygen
+  const backendPlan = useMutation({
+    mutationFn: async () => {
+      if (!siteId || !site) throw new Error('The backend site is not available.')
+      const apiTarget = apiTargets.data?.items.find((item) => item.id === target.id)
+      const duration = Math.max(60, Math.ceil(estimate.totalHours * 60))
+      const mission = await missionApi.createMission({ name: `${target.name} traverse`, description: `Created from the integrated MARS-NAV planner using ${mode} mode.`, site_id: siteId, start_location: { x_m: routeOrigin.localPosition[0], y_m: routeOrigin.localPosition[1] }, eva_duration_limit_min: duration, return_reserve_min: 60, science_target_ids: apiTarget ? [apiTarget.id] : [], constraints: { max_slope_deg: mode === 'walk' ? 15 : 20, block_unknown_terrain: true, preferred_profile: routePreference === 'safe' ? 'safety_first' : 'shorter_distance' } })
+      const result = await missionApi.planRoutes({ mission_id: mission.id, start: { x_m: routeOrigin.localPosition[0], y_m: routeOrigin.localPosition[1] }, profiles: ['shorter_distance', 'safety_first'], return_to_habitat: true, eva_duration_limit_min: duration, return_reserve_min: 60, destinations: [{ ...(apiTarget ? { science_target_id: apiTarget.id } : { location: { x_m: target.localPosition[0], y_m: target.localPosition[1] } }), label: target.name, activity_duration_min: apiTarget?.estimated_activity_duration_min ?? 30 }] })
+      const selectedProfile = routePreference === 'safe' ? 'safety_first' : 'shorter_distance'
+      const selected = result.routes.find((route) => route.profile === selectedProfile) ?? result.routes[0]
+      if (!selected || selected.status === 'no_route') throw new Error(selected?.warnings.join(' ') || 'The backend could not produce a traversable route.')
+      const saved = await missionApi.saveRoute(mission.id, selected.profile, duration)
+      return { mission, routes: result.routes, saved }
+    },
+    onSuccess: ({ mission, routes, saved }) => { setCurrentMission(mission); setBackendRoutes(routes); setSavedRouteId(saved.id); setPlanConfirmed(true) },
+  })
 
   const chooseTarget = (id: string) => {
-    const next = id === 'habitat' ? habitatTarget : scienceTargets.find((item) => item.id === id)!
-    if (id === 'habitat') setCustomDestination(habitatTarget)
+    const next = id === 'habitat' ? activeHabitat : targetList.find((item) => item.id === id)!
+    if (id === 'habitat') setCustomDestination(activeHabitat)
     else selectScience(id)
     setQuery(next.name)
     setShowOptions(false)
@@ -162,7 +189,7 @@ export function MissionOverview() {
           <div className="packing-list"><span>PACKING CHECK</span><label><input type="checkbox" defaultChecked /> Emergency oxygen</label><label><input type="checkbox" defaultChecked /> Communications beacon</label><label><input type="checkbox" /> Science tools</label><label><input type="checkbox" /> Medical kit</label>{mode === 'rover' && <label><input type="checkbox" /> Rover repair kit</label>}</div>
         </section>
 
-        <section className={`readiness-card ${readiness ? 'ready' : 'hold'}`}><div><CheckCircle2 size={21} /><span><strong>{readiness ? (mode === 'air' ? 'Scout flight ready for review' : 'Trip ready for review') : 'Trip requires changes'}</strong><small>{readiness ? (mode === 'air' ? 'Uncrewed reconnaissance simulation only.' : 'Mode and reserves meet demo limits.') : 'Resource reserve is insufficient.'}</small></span></div><button disabled={!readiness} onClick={() => setPlanConfirmed(true)}>{mode === 'air' ? 'Confirm scout plan' : 'Confirm trip plan'}</button><p>Simulation only · requires mission-controller approval</p></section>
+        <section className={`readiness-card ${readiness ? 'ready' : 'hold'}`}><div><CheckCircle2 size={21} /><span><strong>{readiness ? (mode === 'air' ? 'Scout flight ready for review' : 'Trip ready for review') : 'Trip requires changes'}</strong><small>{apiConnected && mode === 'walk' ? 'Walking EVA will be planned and saved by the backend.' : mode === 'air' ? 'Uncrewed reconnaissance remains a frontend simulation.' : 'Rover planning remains modeled locally until backend mode support is added.'}</small></span></div><button disabled={!readiness || backendPlan.isPending} onClick={() => apiConnected && mode === 'walk' ? backendPlan.mutate() : setPlanConfirmed(true)}>{backendPlan.isPending ? 'Planning with backend…' : mode === 'air' ? 'Confirm scout plan' : apiConnected && mode === 'walk' ? 'Plan & save walking EVA' : 'Confirm trip plan'}</button>{backendPlan.error && <p className="risk-elevated">{backendPlan.error.message}</p>}<p>{apiConnected ? 'Backend connected · rover and flight remain simulated' : 'Local simulation · backend unavailable'}</p></section>
       </aside>
     </section>
   </div>

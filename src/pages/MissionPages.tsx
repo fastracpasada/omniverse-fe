@@ -24,6 +24,9 @@ import { MapLayerControl } from "../components/map/MapLayerControl";
 import { MarsMap } from "../components/map/MarsMap";
 import { useMissionStore } from "../stores/missionStore";
 import type { MissionRoute } from "../types/mission";
+import { useQuery } from "@tanstack/react-query";
+import { useMissionData } from "../hooks/useMissionData";
+import { apiTargetToScienceTarget, missionApi } from "../services/missionApi";
 
 export function MarsExplorer() {
   return (
@@ -188,8 +191,10 @@ export function RoutePlanner() {
 }
 
 export function ScienceObjectives() {
+  const { site, targets: apiTargets } = useMissionData();
   const selectedId = useMissionStore((state) => state.selectedScienceId);
   const selectScience = useMissionStore((state) => state.selectScience);
+  const targetList = site && apiTargets.data ? apiTargets.data.items.map((target) => apiTargetToScienceTarget(target, site)) : scienceTargets;
   return (
     <div className="page-wrap">
       <PageHeading
@@ -198,13 +203,13 @@ export function ScienceObjectives() {
         description="Proposed points of interest and planned observations for the demo traverse."
       />
       <div className="objective-status-row">
-        <span className="demo-badge">3 PROPOSED TARGETS</span>
+        <span className="demo-badge">{targetList.length} {apiTargets.data ? "BACKEND TARGETS" : "PROPOSED TARGETS"}</span>
         <span className="quiet-note">
           All locations and observations are simulated.
         </span>
       </div>
       <div className="target-grid">
-        {scienceTargets.map((target, index) => (
+        {targetList.map((target, index) => (
           <button
             className={`target-card ${target.id === selectedId ? "selected" : ""}`}
             key={target.id}
@@ -397,6 +402,8 @@ void LegacyEVASimulation;
 export { OperationsControl as EVASimulation } from "../components/operations/OperationsControl";
 
 export function MissionReports() {
+  const { siteId, apiConnected } = useMissionData();
+  const reports = useQuery({ queryKey: ["api", "missions", siteId], queryFn: () => missionApi.getMissions(siteId!), enabled: Boolean(siteId), retry: false });
   const downloadReport = () => {
     const report = {
       mission: demoMission,
@@ -404,6 +411,7 @@ export function MissionReports() {
       routes: missionRoutes,
       telemetry: initialTelemetry,
       dataLabel: "SIMULATED DEMO DATA",
+      backendMissions: reports.data?.items ?? [],
     };
     const url = URL.createObjectURL(
       new Blob([JSON.stringify(report, null, 2)], { type: "application/json" }),
@@ -425,7 +433,7 @@ export function MissionReports() {
         <PanelHeading
           icon={<Activity size={14} />}
           title="MISSION LOG"
-          badge="LOCAL DEMO"
+          badge={apiConnected ? "BACKEND RECORDS" : "LOCAL DEMO"}
         />
         <div className="table-scroll">
           <table className="list-table">
@@ -438,8 +446,8 @@ export function MissionReports() {
                 <th>DATA</th>
               </tr>
             </thead>
-            <tbody>
-              <tr>
+            <tbody>{reports.data?.items.map((mission) => <tr key={mission.id}><td>{mission.id}</td><td>{mission.name}</td><td>—</td><td><span className="status-text">{mission.status.toUpperCase()}</span></td><td>{mission.is_demo ? "API demo" : "Backend"}</td></tr>)}
+              {!reports.data?.items.length && <><tr>
                 <td>DEMO-JZ-07</td>
                 <td>Jezero Traverse 07</td>
                 <td>018</td>
@@ -456,7 +464,7 @@ export function MissionReports() {
                   <span className="status-text">SIMULATED</span>
                 </td>
                 <td>Mock report</td>
-              </tr>
+              </tr></>}
             </tbody>
           </table>
         </div>
