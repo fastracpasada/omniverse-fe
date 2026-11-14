@@ -1,6 +1,7 @@
 import { Activity, ChevronLeft, ChevronRight, Compass, FileText, FlaskConical, Gauge, Map, Settings2, ShieldCheck, Wifi } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import { useMissionStore } from '../../stores/missionStore'
+import { useMissionData } from '../../hooks/useMissionData'
 
 const navigation = [
   { to: '/', label: 'Mission Overview', icon: Gauge, end: true },
@@ -15,6 +16,8 @@ const navigation = [
 export function Sidebar() {
   const collapsed = useMissionStore((state) => state.sidebarCollapsed)
   const toggleSidebar = useMissionStore((state) => state.toggleSidebar)
+  const { health } = useMissionData()
+  const connectionLabel = health.data?.database ? 'FastAPI connected' : health.isError ? 'API unreachable · local fallback' : 'Connecting to API...'
   return (
     <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
       <div className="side-label">Mission workspace</div>
@@ -26,7 +29,7 @@ export function Sidebar() {
         ))}
       </nav>
       <div className="sidebar-bottom">
-        {!collapsed && <div className="connection-box"><div className="connection-head"><Wifi size={13} color="var(--green)" /> Local demo environment</div><div className="connection-copy">Backend connection is not configured. Mission values are simulated.</div></div>}
+        {!collapsed && <div className="connection-box"><div className="connection-head"><Wifi size={13} color={health.data?.database ? 'var(--green)' : 'var(--amber)'} />{connectionLabel}</div><div className="connection-copy">Mission and terrain records are labeled by backend provenance.</div></div>}
         <button className="collapse-button" onClick={toggleSidebar} aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}>
           {collapsed ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}<span className="collapse-text">Collapse sidebar</span>
         </button>
