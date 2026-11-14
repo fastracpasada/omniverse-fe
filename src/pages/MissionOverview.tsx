@@ -4,6 +4,8 @@ import { Link } from 'react-router-dom'
 import { demoMission, environmentalContext, initialTelemetry, scienceTargets } from '../data/demoMission'
 import { MarsMap } from '../components/map/MarsMap'
 import { useMissionStore } from '../stores/missionStore'
+import { useMissionData } from '../hooks/useMissionData'
+import { toScienceTarget } from '../services/missionApi'
 
 const trend = [
   { time: '13:45', oxygen: 100, battery: 100 }, { time: '14:00', oxygen: 95, battery: 94 }, { time: '14:15', oxygen: 91, battery: 88 },
@@ -17,19 +19,21 @@ function formatElapsed(seconds: number) {
 }
 
 export function MissionOverview() {
+  const { site, targets, terrainSample, apiConnected } = useMissionData()
   const elapsed = useMissionStore((state) => state.telemetryElapsedSeconds)
   const selectedId = useMissionStore((state) => state.selectedScienceId)
-  const selectedTarget = scienceTargets.find((target) => target.id === selectedId) ?? scienceTargets[0]
+  const availableTargets = targets.data?.items.map((target) => toScienceTarget(target, site)) ?? scienceTargets
+  const selectedTarget = availableTargets.find((target) => target.id === selectedId) ?? availableTargets[0]
   const oxygen = Math.max(0, initialTelemetry.oxygenPercent - Math.floor((elapsed - initialTelemetry.elapsedSeconds) / 90))
   const battery = Math.max(0, initialTelemetry.batteryPercent - Math.floor((elapsed - initialTelemetry.elapsedSeconds) / 120))
   return <div className="page-wrap">
     <div className="page-heading"><div><div className="page-kicker">MISSION CONTROL / OVERVIEW</div><h1 className="page-title">Mission overview</h1><p className="page-description">Expedition status, surface context, and EVA telemetry at a glance.</p></div><div className="date-chip"><Clock3 size={13} /> SOL {String(demoMission.sol).padStart(3, '0')} <span style={{ color: 'var(--faint)' }}>/</span> {demoMission.missionTime}</div></div>
 
     <section className="summary-grid" aria-label="Mission summary">
-      <Metric icon={<Activity size={14} />} label="Mission status" value="NOMINAL" note="All demo systems reporting" color="var(--green)" />
+      <Metric icon={<Activity size={14} />} label="Backend status" value={apiConnected ? 'CONNECTED' : 'DEMO MODE'} note={apiConnected ? 'FastAPI + database available' : 'Local data fallback active'} color={apiConnected ? 'var(--green)' : 'var(--amber)'} />
       <Metric icon={<Compass size={14} />} label="Current traverse" value="2.4 km" note="Distance from habitat · SIMULATED" />
       <Metric icon={<FlaskConical size={14} />} label="Science objectives" value="01 / 03" note="One objective in progress" color="var(--orange)" />
-      <Metric icon={<ShieldAlert size={14} />} label="Terrain risk" value="MODERATE" note="Mock slope sample · DEMO" color="var(--amber)" />
+      <Metric icon={<ShieldAlert size={14} />} label="Habitat terrain sample" value={terrainSample.data ? String(terrainSample.data.terrain_category).toUpperCase() : 'UNAVAILABLE'} note={terrainSample.data ? `${Number(terrainSample.data.risk_score).toFixed(2)} prototype score · DEMO` : 'Backend sample unavailable'} color={terrainSample.data ? 'var(--green)' : 'var(--amber)'} />
     </section>
 
     <section className="dashboard-grid">
@@ -39,12 +43,12 @@ export function MissionOverview() {
         <div className="panel-body">
           <div className="brief-name"><div className="brief-mission">{demoMission.name}</div><div className="brief-crew"><span className="status-dot" style={{ width: 6, height: 6 }} />{demoMission.crew}</div></div>
           <div className="brief-grid">
-            <BriefCell label="Habitat" value={demoMission.habitat} />
+            <BriefCell label="Habitat" value={site ? `SITE HABITAT · ${site.habitat_location.x_m.toFixed(0)}, ${site.habitat_location.y_m.toFixed(0)} m` : demoMission.habitat} />
             <BriefCell label="Selected destination" value={selectedTarget.name} accent />
             <BriefCell label="Route distance" value={`${selectedTarget.distanceKm.toFixed(1)} km`} />
             <BriefCell label="Est. walking duration" value="2 h 24 m" />
             <BriefCell label="EVA time remaining" value="05 h 21 m" />
-            <BriefCell label="Terrain risk" value={<span className="risk-inline"><span className="risk-dot" />{selectedTarget.risk}</span>} />
+            <BriefCell label="Terrain sample · DEMO" value={terrainSample.data ? `${Number(terrainSample.data.slope_deg).toFixed(1)}° slope · ${String(terrainSample.data.terrain_category)}` : 'Unavailable'} />
           </div>
           <div className="objective-preview"><div className="panel-title"><FlaskConical size={13} /> SCIENCE OBJECTIVES</div>{demoMission.objectives.map((objective, index) => <div className="objective-row" key={objective.id}><span className={`objective-check ${index === 0 ? 'done' : ''}`}>{index === 0 ? '✓' : ''}</span><span>{objective.title}</span><span className="objective-count">{index === 0 ? 'ACTIVE' : 'QUEUED'}</span></div>)}</div>
         </div>

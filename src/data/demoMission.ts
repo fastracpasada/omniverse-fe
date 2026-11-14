@@ -46,7 +46,7 @@ export const initialTelemetry: MissionTelemetry = {
 
 export const initialLayers: MapLayerDefinition[] = [
   { id: 'optical', name: 'Optical imagery', status: 'PLACEHOLDER', visible: false },
-  { id: 'elevation', name: 'Elevation', status: 'PLACEHOLDER', visible: false },
+  { id: 'elevation', name: 'Elevation', status: 'DEMO', visible: true },
   { id: 'slope', name: 'Terrain slope', status: 'DEMO', visible: false },
   { id: 'geology', name: 'Geological observations', status: 'PLACEHOLDER', visible: false },
   { id: 'hazards', name: 'Hazard zones', status: 'DEMO', visible: true },
