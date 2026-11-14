@@ -1,77 +1,194 @@
-import { Activity, ArrowUpRight, Clock3, Compass, FlaskConical, Gauge, ShieldAlert, Wind } from 'lucide-react'
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { Link } from 'react-router-dom'
-import { demoMission, environmentalContext, initialTelemetry, scienceTargets } from '../data/demoMission'
+import { useMemo, useState } from 'react'
+import { Activity, AlertTriangle, Battery, CheckCircle2, Clock3, Footprints, MapPin, Navigation, PackageCheck, Plane, Search, ShieldCheck, Truck } from 'lucide-react'
 import { MarsMap } from '../components/map/MarsMap'
+import { demoMission, environmentalContext, initialTelemetry, scienceTargets } from '../data/demoMission'
 import { useMissionStore } from '../stores/missionStore'
+import { marsToLocalMetres } from '../utils/marsProjection'
+import type { ScienceTarget } from '../types/mission'
+import { MarsWeatherBrief } from '../components/weather/MarsWeatherBrief'
+import { planTerrainRoute } from '../utils/terrainRouting'
 
-const trend = [
-  { time: '13:45', oxygen: 100, battery: 100 }, { time: '14:00', oxygen: 95, battery: 94 }, { time: '14:15', oxygen: 91, battery: 88 },
-  { time: '14:30', oxygen: 85, battery: 82 }, { time: '14:45', oxygen: 82, battery: 76 }, { time: '15:00', oxygen: 77, battery: 71 },
-]
+type TravelMode = 'walk' | 'rover' | 'air'
 
-function formatElapsed(seconds: number) {
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+const modes = {
+  walk: { label: 'Walk', icon: Footprints, speed: 3, range: 'Up to 2 km', note: 'Best for nearby, low-risk destinations.' },
+  rover: { label: 'Rover', icon: Truck, speed: 12, range: '2–20 km', note: 'Crew transport with cargo and emergency reserve.' },
+  air: { label: 'Aerial vehicle', icon: Plane, speed: 30, range: 'Scout support', note: 'Experimental simulation; no operational crew aircraft on Mars.' },
+} satisfies Record<TravelMode, { label: string; icon: typeof Footprints; speed: number; range: string; note: string }>
+
+const habitatTarget: ScienceTarget = { id: 'habitat', name: 'HAB-01 Habitat', category: 'Mission habitat', localPosition: [0, 0], distanceKm: 0, risk: 'LOW', description: 'Primary mission habitat and safe return destination.', objective: 'Depart from or return to habitat', status: 'PLANNED', source: 'MISSION DEMO' }
+
+function recommendation(distance: number, risk: string): TravelMode {
+  if (distance <= 2 && risk === 'LOW') return 'walk'
+  return 'rover'
+}
+
+function coordinateTarget(query: string): ScienceTarget | null {
+  const matches = query.trim().match(/^(-?\d+(?:\.\d+)?)\s*[, ]\s*(-?\d+(?:\.\d+)?)$/)
+  if (!matches) return null
+  const latitude = Number(matches[1])
+  const longitude = Number(matches[2])
+  if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) return null
+  const localPosition = marsToLocalMetres([longitude, latitude])
+  const distanceKm = Math.hypot(...localPosition) / 1000
+  return { id: `CUSTOM-${latitude.toFixed(5)}-${longitude.toFixed(5)}`, name: `Custom point ${latitude.toFixed(5)}°, ${longitude.toFixed(5)}°`, category: 'Latitude / longitude', localPosition, coordinates: [longitude, latitude], distanceKm, risk: distanceKm > 8 ? 'ELEVATED' : distanceKm > 2 ? 'MODERATE' : 'LOW', description: 'User-selected coordinate. Terrain and route safety have not been validated.', objective: 'Explore custom map point', status: 'PLANNED', source: 'CUSTOM COORDINATE' }
 }
 
 export function MissionOverview() {
-  const elapsed = useMissionStore((state) => state.telemetryElapsedSeconds)
   const selectedId = useMissionStore((state) => state.selectedScienceId)
-  const selectedTarget = scienceTargets.find((target) => target.id === selectedId) ?? scienceTargets[0]
+  const selectScience = useMissionStore((state) => state.selectScience)
+  const customDestination = useMissionStore((state) => state.customDestination)
+  const setCustomDestination = useMissionStore((state) => state.setCustomDestination)
+  const routeOrigin = useMissionStore((state) => state.routeOrigin)
+  const setRouteOrigin = useMissionStore((state) => state.setRouteOrigin)
+  const elapsed = useMissionStore((state) => state.telemetryElapsedSeconds)
+  const [query, setQuery] = useState('')
+  const [originQuery, setOriginQuery] = useState('HAB-01 Habitat')
+  const mode = useMissionStore((state) => state.travelMode)
+  const setMode = useMissionStore((state) => state.setTravelMode)
+  const [showOptions, setShowOptions] = useState(false)
+  const routePreference = useMissionStore((state) => state.routeProfile)
+  const setRoutePreference = useMissionStore((state) => state.setRouteProfile)
+  const [planConfirmed, setPlanConfirmed] = useState(false)
+  const target = (customDestination?.id === selectedId ? customDestination : scienceTargets.find((item) => item.id === selectedId)) ?? scienceTargets[2]
+  const tripDistanceKm = Math.hypot(target.localPosition[0] - routeOrigin.localPosition[0], target.localPosition[1] - routeOrigin.localPosition[1]) / 1000
+  const routeResult = useMemo(() => mode === 'air' ? null : planTerrainRoute(routeOrigin.localPosition, target.localPosition, mode, routePreference), [mode, routeOrigin, target, routePreference])
+  const routeDistanceKm = mode === 'air' ? tripDistanceKm : routeResult?.status === 'ok' ? routeResult.distanceM / 1000 : 0
+  const suggestedMode = recommendation(tripDistanceKm, target.risk)
+  const parsedCoordinate = coordinateTarget(query)
+  const parsedOriginCoordinate = coordinateTarget(originQuery)
+  const filteredTargets = [habitatTarget, ...scienceTargets].filter((item) => `${item.name} ${item.category}`.toLowerCase().includes(query.toLowerCase()))
+  const originChoices = [habitatTarget, ...scienceTargets].filter((item) => `${item.name} ${item.category}`.toLowerCase().includes(originQuery.toLowerCase()))
   const oxygen = Math.max(0, initialTelemetry.oxygenPercent - Math.floor((elapsed - initialTelemetry.elapsedSeconds) / 90))
-  const battery = Math.max(0, initialTelemetry.batteryPercent - Math.floor((elapsed - initialTelemetry.elapsedSeconds) / 120))
-  return <div className="page-wrap">
-    <div className="page-heading"><div><div className="page-kicker">MISSION CONTROL / OVERVIEW</div><h1 className="page-title">Mission overview</h1><p className="page-description">Expedition status, surface context, and EVA telemetry at a glance.</p></div><div className="date-chip"><Clock3 size={13} /> SOL {String(demoMission.sol).padStart(3, '0')} <span style={{ color: 'var(--faint)' }}>/</span> {demoMission.missionTime}</div></div>
+  const estimate = useMemo(() => {
+    const activeMode = modes[mode]
+    const travelHours = (routeDistanceKm * 2) / activeMode.speed
+    const activityHours = 1
+    const totalHours = travelHours + activityHours
+    return {
+      travelHours,
+      totalHours,
+      oxygen: Math.ceil(totalHours * 8 * 1.25),
+      water: Math.max(1, Math.ceil(totalHours * .55 * 10) / 10),
+      power: mode === 'rover' ? Math.ceil(routeDistanceKm * 2 * 1.8 * 1.25) : mode === 'air' ? Math.ceil(routeDistanceKm * 2 * .8 * 1.25) : Math.ceil(totalHours * 6),
+    }
+  }, [mode, routeDistanceKm])
+  const walkingUnavailable = tripDistanceKm > 2
+  const routeUnavailable = mode !== 'air' && routeResult?.status !== 'ok'
+  const readiness = !routeUnavailable && !(mode === 'walk' && walkingUnavailable) && estimate.oxygen < oxygen
 
-    <section className="summary-grid" aria-label="Mission summary">
-      <Metric icon={<Activity size={14} />} label="Mission status" value="NOMINAL" note="All demo systems reporting" color="var(--green)" />
-      <Metric icon={<Compass size={14} />} label="Current traverse" value="2.4 km" note="Distance from habitat · SIMULATED" />
-      <Metric icon={<FlaskConical size={14} />} label="Science objectives" value="01 / 03" note="One objective in progress" color="var(--orange)" />
-      <Metric icon={<ShieldAlert size={14} />} label="Terrain risk" value="MODERATE" note="Mock slope sample · DEMO" color="var(--amber)" />
-    </section>
+  const chooseTarget = (id: string) => {
+    const next = id === 'habitat' ? habitatTarget : scienceTargets.find((item) => item.id === id)!
+    if (id === 'habitat') setCustomDestination(habitatTarget)
+    else selectScience(id)
+    setQuery(next.name)
+    setShowOptions(false)
+    setMode(recommendation(Math.hypot(next.localPosition[0] - routeOrigin.localPosition[0], next.localPosition[1] - routeOrigin.localPosition[1]) / 1000, next.risk))
+  }
 
-    <section className="dashboard-grid">
-      <MarsMap />
-      <div className="panel brief-panel">
-        <div className="panel-heading"><div className="panel-title"><Gauge size={14} /> MISSION BRIEF</div><span className="demo-badge">SIMULATED</span></div>
-        <div className="panel-body">
-          <div className="brief-name"><div className="brief-mission">{demoMission.name}</div><div className="brief-crew"><span className="status-dot" style={{ width: 6, height: 6 }} />{demoMission.crew}</div></div>
-          <div className="brief-grid">
-            <BriefCell label="Habitat" value={demoMission.habitat} />
-            <BriefCell label="Selected destination" value={selectedTarget.name} accent />
-            <BriefCell label="Route distance" value={`${selectedTarget.distanceKm.toFixed(1)} km`} />
-            <BriefCell label="Est. walking duration" value="2 h 24 m" />
-            <BriefCell label="EVA time remaining" value="05 h 21 m" />
-            <BriefCell label="Terrain risk" value={<span className="risk-inline"><span className="risk-dot" />{selectedTarget.risk}</span>} />
-          </div>
-          <div className="objective-preview"><div className="panel-title"><FlaskConical size={13} /> SCIENCE OBJECTIVES</div>{demoMission.objectives.map((objective, index) => <div className="objective-row" key={objective.id}><span className={`objective-check ${index === 0 ? 'done' : ''}`}>{index === 0 ? '✓' : ''}</span><span>{objective.title}</span><span className="objective-count">{index === 0 ? 'ACTIVE' : 'QUEUED'}</span></div>)}</div>
-        </div>
+  const chooseCoordinate = (next: ScienceTarget) => {
+    setCustomDestination(next)
+    setQuery(next.name)
+    setShowOptions(false)
+    setMode(recommendation(Math.hypot(next.localPosition[0] - routeOrigin.localPosition[0], next.localPosition[1] - routeOrigin.localPosition[1]) / 1000, next.risk))
+  }
+
+  const chooseOrigin = (next: ScienceTarget) => {
+    setRouteOrigin(next)
+    setOriginQuery(next.name)
+  }
+
+  if (planConfirmed) return <PlannedTripView target={target} origin={routeOrigin} distanceKm={routeDistanceKm} mode={mode} estimate={estimate} routePreference={routePreference} routeResult={routeResult} onEdit={() => setPlanConfirmed(false)} />
+
+  return <div className="page-wrap travel-workspace">
+    <header className="travel-hero">
+      <div><span className="welcome-label">SOL {demoMission.sol} · TRIP PLANNER</span><h1>Where are you going?</h1><p>Search a destination and prepare the entire surface trip from one screen.</p></div>
+      <div className="nominal-pill"><ShieldCheck size={17} /> Systems normal</div>
+    </header>
+
+    <section className={`destination-search route-search ${showOptions ? 'expanded' : ''}`} aria-label="Route search">
+      <Search size={20} />
+      <div className="search-field-wrap">
+        <label>Plan a route</label>
+        <button className="route-search-trigger" onClick={() => setShowOptions(true)} aria-expanded={showOptions}><span><small>FROM</small><strong>{routeOrigin.name}</strong></span><Navigation size={15} /><span><small>TO</small><strong>{target.name}</strong></span></button>
+        {showOptions && <div className="route-search-panel">
+          <div className="route-search-heading"><div><strong>Where are you traveling?</strong><small>Choose both endpoints before reviewing the route.</small></div><button onClick={() => setShowOptions(false)}>Done</button></div>
+          <div className="route-endpoint"><label htmlFor="origin-search"><span>FROM</span> Starting point</label><input id="origin-search" value={originQuery} placeholder="Habitat, location, or coordinates" onChange={(event) => setOriginQuery(event.target.value)} /><div className="endpoint-results">{parsedOriginCoordinate && <button onClick={() => chooseOrigin({ ...parsedOriginCoordinate, id: `ORIGIN-${parsedOriginCoordinate.id}` })}><MapPin size={14} /><span><strong>Use these coordinates</strong><small>{parsedOriginCoordinate.name}</small></span></button>}{originChoices.slice(0, 5).map((item) => <button key={`from-${item.id}`} className={routeOrigin.id === item.id ? 'selected' : ''} onClick={() => chooseOrigin(item)}><MapPin size={14} /><span><strong>{item.name}</strong><small>{item.category}</small></span></button>)}</div></div>
+          <div className="route-direction-line"><span /><Navigation size={14} /><span /></div>
+          <div className="route-endpoint"><label htmlFor="destination-search"><span>TO</span> Destination</label><input id="destination-search" value={query} placeholder="Location or latitude, longitude" onChange={(event) => setQuery(event.target.value)} /><div className="endpoint-results">{parsedCoordinate && <button onClick={() => chooseCoordinate(parsedCoordinate)}><MapPin size={14} /><span><strong>Use these coordinates</strong><small>{parsedCoordinate.name}</small></span></button>}{filteredTargets.slice(0, 6).map((item) => <button key={`to-${item.id}`} className={target.id === item.id ? 'selected' : ''} onClick={() => chooseTarget(item.id)}><MapPin size={14} /><span><strong>{item.name}</strong><small>{item.category}</small></span></button>)}</div></div>
+          <div className="route-search-summary"><span>{tripDistanceKm.toFixed(1)} km between points</span><button onClick={() => setShowOptions(false)}>Use this route</button></div>
+        </div>}
       </div>
+      <button className="search-action" onClick={() => setShowOptions(true)}>Change route</button>
+      <div className="destination-help">Named references use NASA mission maps and the <a href="https://planetarynames.wr.usgs.gov/" target="_blank" rel="noreferrer">USGS–IAU Gazetteer</a>. Mission-area markers are approximate; click the map for any custom point.</div>
     </section>
 
-    <section className="panel telemetry-section">
-      <div className="panel-heading"><div className="panel-title"><Activity size={14} /> EVA TELEMETRY</div><span className="demo-badge">ALL VALUES SIMULATED</span></div>
-      <div className="telemetry-grid">
-        <Telemetry label="Oxygen remaining" value={`${oxygen}%`} sub="Suit supply · SIMULATED" progress={oxygen} />
-        <Telemetry label="Suit battery" value={`${battery}%`} sub="Power reserve · SIMULATED" progress={battery} />
-        <Telemetry label="EVA elapsed" value={formatElapsed(elapsed)} sub="Mission clock · SIMULATED" />
-        <Telemetry label="Distance traveled" value={`${(2.4 + (elapsed - initialTelemetry.elapsedSeconds) / 36000).toFixed(1)} km`} sub="From habitat · SIMULATED" />
-        <Telemetry label="Estimated return" value={initialTelemetry.estimatedReturn} sub="Projected window · DEMO" />
+    <section className="trip-layout">
+      <div className="trip-main">
+        <div className="map-home"><MarsMap /></div>
+        <section className="travel-section">
+          <div className="travel-section-heading"><div><span>2</span><div><h2>Choose how to travel</h2><p>We suggest a mode based on distance and terrain risk.</p></div></div><div className="recommendation-badge">Recommended: {modes[suggestedMode].label}</div></div>
+          <div className="mode-grid">{(Object.keys(modes) as TravelMode[]).map((key) => {
+            const item = modes[key]
+            const Icon = item.icon
+            const unavailable = key === 'walk' && walkingUnavailable
+            return <button key={key} className={`mode-card ${mode === key ? 'selected' : ''} ${unavailable ? 'unavailable' : ''}`} onClick={() => !unavailable && setMode(key)} disabled={unavailable}>
+              <div className="mode-card-top"><span className="mode-icon"><Icon size={20} /></span>{key === suggestedMode && <span className="best-chip">BEST MATCH</span>}</div>
+              <strong>{item.label}</strong><small>{item.range}</small><p>{unavailable ? `Walking is limited to trips of 2 km or less.` : item.note}</p>
+            </button>
+          })}</div>
+          {mode === 'air' && <div className="air-warning"><AlertTriangle size={16} /><span><strong>Aerial scouting path selected.</strong> This compares an autonomous reconnaissance flight with surface routes; it does not represent passenger transport.</span></div>}
+        </section>
+
+        <section className="travel-section">
+          <div className="travel-section-heading"><div><span>3</span><div><h2>Review route and risk</h2><p>Choose the priority for this simulated route.</p></div></div></div>
+          <div className="route-choice-row"><button className={routePreference === 'safe' ? 'selected' : ''} onClick={() => setRoutePreference('safe')}><ShieldCheck size={18} /><span><strong>Safety-first</strong><small>Weights slope and hazard clearance</small></span></button><button className={routePreference === 'fast' ? 'selected' : ''} onClick={() => setRoutePreference('fast')}><Navigation size={18} /><span><strong>Shortest traversable</strong><small>Minimizes distance within hard limits</small></span></button></div>
+          {routeUnavailable && <div className="no-route-warning"><AlertTriangle size={17} /><span><strong>{routeResult?.status === 'outside_coverage' ? 'Outside terrain coverage' : 'No traversable surface route'}</strong><small>{routeResult?.reason} Choose another endpoint, mode, or route profile.</small></span></div>}
+          <div className="risk-grid"><Risk label="Terrain" value={target.risk} detail={routeResult?.status === 'ok' ? `${routeResult.maximumSlopeDeg.toFixed(1)}° max · ${routeResult.elevationGainM.toFixed(0)} m gain` : 'Route terrain unavailable'} /><Risk label="Environment" value="MODERATE" detail={environmentalContext[1].value} /><Risk label="Communications" value="LOW" detail="Relay coverage available" /><Risk label="Return margin" value={estimate.totalHours < 5 ? 'GOOD' : 'TIGHT'} detail={`${Math.max(0, 6 - estimate.totalHours).toFixed(1)} h EVA reserve`} /></div>
+        </section>
       </div>
-    </section>
 
-    <section className="bottom-grid">
-      <div className="panel"><div className="panel-heading"><div className="panel-title"><Activity size={14} /> RESOURCE PROFILE</div><span className="demo-badge">SIMULATED</span></div><div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><AreaChart data={trend} margin={{ top: 5, right: 12, left: -18, bottom: 0 }}><defs><linearGradient id="oxygenFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#38bdf8" stopOpacity={.23} /><stop offset="100%" stopColor="#38bdf8" stopOpacity={0} /></linearGradient><linearGradient id="batteryFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#f97316" stopOpacity={.16} /><stop offset="100%" stopColor="#f97316" stopOpacity={0} /></linearGradient></defs><CartesianGrid stroke="#26374c" strokeDasharray="3 5" vertical={false} /><XAxis dataKey="time" tick={{ fill: '#77879c', fontSize: 9 }} axisLine={false} tickLine={false} /><YAxis domain={[60, 100]} tick={{ fill: '#77879c', fontSize: 9 }} axisLine={false} tickLine={false} /><Tooltip contentStyle={{ background: '#101c2d', border: '1px solid #34465d', borderRadius: 4, color: '#dce5ef', fontSize: 10 }} /><Area type="monotone" dataKey="oxygen" name="Oxygen" stroke="#38bdf8" strokeWidth={2} fill="url(#oxygenFill)" /><Area type="monotone" dataKey="battery" name="Battery" stroke="#f97316" strokeWidth={1.5} fill="url(#batteryFill)" /></AreaChart></ResponsiveContainer></div><div className="chart-caption"><span><span className="chart-key cyan" /> Oxygen reserve</span><span><span className="chart-key orange" /> Battery reserve</span><span>DEMO PROFILE · NOT FLIGHT DATA</span></div></div>
-      <div className="panel"><div className="panel-heading"><div className="panel-title"><Wind size={14} /> ENVIRONMENTAL CONTEXT</div><span className="demo-badge">SIMULATED</span></div><div className="panel-body"><div className="environment-list">{environmentalContext.map((item) => <div className="environment-row" key={item.label}><span className="environment-label">{item.label}</span><span className="environment-value">{item.value}</span></div>)}</div><div className="warning-strip"><ShieldAlert size={13} /><span>Terrain and environment values are mock examples, not NASA observations or operational thresholds.</span></div></div></div>
+      <aside className="trip-sidebar">
+        <section className="trip-summary-card">
+          <span className="simple-section-label">SELECTED TRIP · {target.source ?? 'MISSION DEMO'}</span><h2>{target.name}</h2><p>{target.description}</p>
+          <div className="summary-facts"><Fact label="Starting from" value={routeOrigin.name} /><Fact label="Routed distance" value={routeUnavailable ? 'No route' : `${routeDistanceKm.toFixed(1)} km`} /><Fact label="Travel mode" value={modes[mode].label} /><Fact label="Total mission time" value={routeUnavailable ? '—' : `${estimate.totalHours.toFixed(1)} h`} /></div>
+        </section>
+
+        <MarsWeatherBrief origin={routeOrigin} destination={target} mode={mode} />
+
+        <section className="resource-card">
+          <div className="side-card-title"><PackageCheck size={18} /><div><h3>Required resources</h3><p>Includes a 25% planning reserve</p></div></div>
+          <div className="resource-list"><Resource icon={<Activity />} label="Suit oxygen" value={`${estimate.oxygen}% capacity`} /><Resource icon={<Battery />} label={mode === 'rover' ? 'Rover energy' : 'Power reserve'} value={`${estimate.power}${mode === 'rover' ? ' kWh' : '%'}`} /><Resource icon={<PackageCheck />} label="Crew water" value={`${estimate.water} L`} /><Resource icon={<Clock3 />} label="Time allocation" value={`${estimate.totalHours.toFixed(1)} h`} /></div>
+          <div className="packing-list"><span>PACKING CHECK</span><label><input type="checkbox" defaultChecked /> Emergency oxygen</label><label><input type="checkbox" defaultChecked /> Communications beacon</label><label><input type="checkbox" /> Science tools</label><label><input type="checkbox" /> Medical kit</label>{mode === 'rover' && <label><input type="checkbox" /> Rover repair kit</label>}</div>
+        </section>
+
+        <section className={`readiness-card ${readiness ? 'ready' : 'hold'}`}><div><CheckCircle2 size={21} /><span><strong>{readiness ? (mode === 'air' ? 'Scout flight ready for review' : 'Trip ready for review') : 'Trip requires changes'}</strong><small>{readiness ? (mode === 'air' ? 'Uncrewed reconnaissance simulation only.' : 'Mode and reserves meet demo limits.') : 'Resource reserve is insufficient.'}</small></span></div><button disabled={!readiness} onClick={() => setPlanConfirmed(true)}>{mode === 'air' ? 'Confirm scout plan' : 'Confirm trip plan'}</button><p>Simulation only · requires mission-controller approval</p></section>
+      </aside>
     </section>
-    <div className="overview-links"><Link to="/explorer" className="panel-action">Open Mars Explorer <ArrowUpRight size={13} /></Link><Link to="/route-planner" className="panel-action">Plan a traverse <ArrowUpRight size={13} /></Link><Link to="/science" className="panel-action">View science targets <ArrowUpRight size={13} /></Link></div>
   </div>
 }
 
-function Metric({ icon, label, value, note, color = 'var(--cyan)' }: { icon: React.ReactNode; label: string; value: string; note: string; color?: string }) {
-  return <div className="panel metric-card"><div className="metric-label"><span className="metric-icon" style={{ color }}>{icon}</span>{label}</div><div className="metric-value" style={{ color }}>{value}</div><div className="metric-note">{note}</div></div>
+function PlannedTripView({ target, origin, distanceKm, mode, estimate, routePreference, routeResult, onEdit }: { target: ScienceTarget; origin: ScienceTarget; distanceKm: number; mode: TravelMode; estimate: { travelHours: number; totalHours: number; oxygen: number; water: number; power: number }; routePreference: 'safe' | 'fast'; routeResult: ReturnType<typeof planTerrainRoute> | null; onEdit: () => void }) {
+  const Icon = modes[mode].icon
+  return <div className="page-wrap planned-workspace">
+    <header className="compact-plan-bar">
+      <div className="compact-plan-main"><span className="plan-ready-dot" /><div><small>ROUTE READY</small><strong>{origin.name} → {target.name}</strong></div></div>
+      <div className="compact-plan-facts"><span><Icon size={14} />{modes[mode].label}</span><span><Navigation size={14} />{routePreference === 'safe' ? 'Safer route' : 'Faster route'}</span><span>{distanceKm.toFixed(1)} km</span><span>{estimate.totalHours.toFixed(1)} h total</span></div>
+      <button onClick={onEdit}>Edit plan</button>
+    </header>
+    <section className="mission-map-stage" aria-label="Confirmed route map and trip details">
+      <MarsMap large />
+      <aside className="map-detail-overlay">
+        <div className="overlay-header"><span className="simple-section-label">ACTIVE PLAN</span><strong>{target.name}</strong><small>{target.source ?? 'MISSION DEMO'} · {target.risk} RISK</small></div>
+        <div className="overlay-metrics"><Fact label="Mode" value={modes[mode].label} /><Fact label="Round trip" value={`${estimate.travelHours.toFixed(1)} h`} /><Fact label="Oxygen" value={`${estimate.oxygen}%`} /><Fact label={mode === 'rover' ? 'Energy' : 'Power'} value={`${estimate.power}${mode === 'rover' ? ' kWh' : '%'}`} /><Fact label="Max slope" value={routeResult ? `${routeResult.maximumSlopeDeg.toFixed(1)}°` : 'Flight'} /><Fact label="Route" value={routePreference === 'safe' ? 'Safety-first' : 'Shortest'} /></div>
+        <div className="overlay-alert"><ShieldCheck size={15} /><span><strong>Planning checks complete</strong><small>DEM route · 25% resource reserve</small></span></div>
+        <MarsWeatherBrief origin={origin} destination={target} mode={mode} compact />
+      </aside>
+      <div className="map-path-hint"><span className="legend-line route-walk" /> Walk <span className="legend-line route-rover" /> Rover <span className="legend-line route-air" /> Flight</div>
+    </section>
+  </div>
 }
-function BriefCell({ label, value, accent = false }: { label: string; value: React.ReactNode; accent?: boolean }) { return <div className="brief-cell"><div className="brief-cell-label">{label}</div><div className={`brief-cell-value ${accent ? 'orange' : ''}`}>{value}</div></div> }
-function Telemetry({ label, value, sub, progress }: { label: string; value: string; sub: string; progress?: number }) { return <div className="telemetry-item"><div className="telemetry-top">{label}<span className="sim-dot" title="Simulated value" /></div><div className="telemetry-value">{value}</div>{progress !== undefined && <div className="progress-track"><div className={`progress-fill ${progress < 35 ? 'amber' : ''}`} style={{ width: `${progress}%` }} /></div>}<div className="telemetry-sub">{sub}</div></div> }
+
+function Fact({ label, value }: { label: string; value: string }) { return <div className="simple-fact"><span>{label}</span><strong>{value}</strong></div> }
+function Risk({ label, value, detail }: { label: string; value: string; detail: string }) { const tone = value === 'LOW' || value === 'GOOD' ? 'low' : value === 'ELEVATED' || value === 'TIGHT' ? 'elevated' : 'moderate'; return <div className="risk-card"><span>{label}</span><strong className={`risk-${tone}`}>{value}</strong><small>{detail}</small></div> }
+function Resource({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) { return <div className="resource-line"><span>{icon}</span><div><small>{label}</small><strong>{value}</strong></div></div> }

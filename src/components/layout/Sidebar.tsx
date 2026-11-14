@@ -1,14 +1,13 @@
-import { Activity, ChevronLeft, ChevronRight, Compass, FileText, FlaskConical, Gauge, Map, Settings2, ShieldCheck, Wifi } from 'lucide-react'
+import { Activity, ChevronLeft, ChevronRight, FileText, FlaskConical, Gauge, Map, Settings2, ShieldCheck, Wifi } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import { useMissionStore } from '../../stores/missionStore'
 
 const navigation = [
-  { to: '/', label: 'Mission Overview', icon: Gauge, end: true },
-  { to: '/explorer', label: 'Mars Explorer', icon: Map },
-  { to: '/route-planner', label: 'Route Planner', icon: Compass },
-  { to: '/science', label: 'Science Objectives', icon: FlaskConical },
-  { to: '/eva', label: 'EVA Simulation', icon: Activity },
-  { to: '/reports', label: 'Mission Reports', icon: FileText },
+  { to: '/', label: 'Overview', icon: Gauge, end: true },
+  { to: '/explorer', label: 'Explore map', icon: Map },
+  { to: '/science', label: 'Science', icon: FlaskConical },
+  { to: '/eva', label: 'Operations', icon: Activity },
+  { to: '/reports', label: 'Reports', icon: FileText },
   { to: '/settings', label: 'Settings', icon: Settings2 },
 ]
 
@@ -17,7 +16,7 @@ export function Sidebar() {
   const toggleSidebar = useMissionStore((state) => state.toggleSidebar)
   return (
     <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
-      <div className="side-label">Mission workspace</div>
+      <div className="side-label">Workspace</div>
       <nav className="nav-list" aria-label="Mission navigation">
         {navigation.map(({ to, label, icon: Icon, end }) => (
           <NavLink key={to} to={to} end={end} title={label} aria-label={label} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}>
