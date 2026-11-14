@@ -68,7 +68,7 @@ export function RoutePlanner() {
       <PageHeading
         kicker="MISSION DESIGN / TRAVERSE"
         title="Route planner"
-        description="Compare mock route alternatives for a proposed science traverse."
+        description="Compare mock route alternatives for a science traverse."
       />
       <div className="page-content-grid">
         <div className="stacked-panels">
@@ -201,10 +201,10 @@ export function ScienceObjectives() {
       <PageHeading
         kicker="SCIENCE / TARGET CATALOG"
         title="Science objectives"
-        description="Proposed points of interest and planned observations for the demo traverse."
+        description="Points of interest and planned observations for the demo traverse."
       />
       <div className="objective-status-row">
-        <span className="demo-badge">{targetList.length} {apiTargets.data ? "BACKEND TARGETS" : "PROPOSED TARGETS"}</span>
+        <span className="demo-badge">{targetList.length} {apiTargets.data ? "BACKEND + DEMO TARGETS" : "DEMO TARGETS"}</span>
         <span className="quiet-note">
           All locations and observations are simulated.
         </span>
