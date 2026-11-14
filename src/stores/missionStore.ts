@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
 import { initialLayers, initialTelemetry } from '../data/demoMission'
 import type { ApiMission, ApiPlannedRoute, ApiSimulationState, MapLayerDefinition } from '../types/mission'
 import type { ScienceTarget } from '../types/mission'

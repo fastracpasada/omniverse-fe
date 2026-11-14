@@ -16,8 +16,6 @@ export function Sidebar() {
   const { health, apiConnected } = useMissionData()
   const collapsed = useMissionStore((state) => state.sidebarCollapsed)
   const toggleSidebar = useMissionStore((state) => state.toggleSidebar)
-  const { health } = useMissionData()
-  const connectionLabel = health.data?.database ? 'FastAPI connected' : health.isError ? 'API unreachable · local fallback' : 'Connecting to API...'
   return (
     <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
       <div className="side-label">Workspace</div>
