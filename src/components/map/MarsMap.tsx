@@ -184,6 +184,7 @@ export function MarsMap({ large = false, showLegend = true }: MarsMapProps) {
   const [mapTheme, setMapTheme] = useState<'schematic' | 'realistic'>('realistic')
   const [terrainInspection, setTerrainInspection] = useState<{ elevationM: number; slopeDeg: number; classification: string; source?: string } | null>(null)
   const layers = useMissionStore((state) => state.layers)
+  const plannedRoutes = useMissionStore((state) => state.plannedRoutes)
   const selectedScienceId = useMissionStore((state) => state.selectedScienceId)
   const travelMode = useMissionStore((state) => state.travelMode)
   const customDestination = useMissionStore((state) => state.customDestination)
@@ -234,6 +235,8 @@ export function MarsMap({ large = false, showLegend = true }: MarsMapProps) {
       }
     })
     mapRef.current = map
+    const mapSize = map.getSize()
+    if (mapSize) map.getView().fit([-width / 2, -height / 2, width / 2, height / 2], { size: mapSize, padding: [28, 28, 28, 28], maxZoom: 3.2 })
     const resizeObserver = new ResizeObserver(() => map.updateSize())
     resizeObserver.observe(targetRef.current)
     return () => { resizeObserver.disconnect(); map.setTarget(undefined); mapRef.current = null }
