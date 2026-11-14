@@ -1,25 +1,46 @@
-import { Activity, CircleDot, Orbit } from 'lucide-react'
+import { useState } from 'react'
+import { Check, CircleDot, Monitor, Moon, SlidersHorizontal, Sun } from 'lucide-react'
 import { demoMission } from '../../data/demoMission'
+import { useMissionStore } from '../../stores/missionStore'
 import { useMissionData } from '../../hooks/useMissionData'
 
 export function TopNavigation() {
-  const { health, site } = useMissionData()
-  const connected = health.data?.database === true
-  const siteName = site?.name ?? demoMission.site
-  const coordinateLabel = site ? `${site.center_latitude_deg.toFixed(2)}° N / ${site.center_longitude_deg_east.toFixed(2)}° E` : demoMission.coordinates
+  const { health, site, apiConnected } = useMissionData()
+  const [displayOpen, setDisplayOpen] = useState(false)
+  const colorMode = useMissionStore((state) => state.colorMode)
+  const textSize = useMissionStore((state) => state.textSize)
+  const setColorMode = useMissionStore((state) => state.setColorMode)
+  const setTextSize = useMissionStore((state) => state.setTextSize)
+
   return (
     <header className="topbar">
       <div className="brand">
-        <div className="brand-mark" aria-hidden="true"><Orbit size={19} /></div>
-        <div><div className="brand-name">MARS-NAV</div><div className="brand-subtitle">NASA Space Apps · Mission Systems</div></div>
+        <div className="brand-mark mars-logo" role="img" aria-label="Rotating Mars globe"><span /></div>
+        <div><div className="brand-name">MARS-NAV</div><div className="brand-subtitle">Mission companion</div></div>
       </div>
-      <div className="topbar-site"><span className="eyebrow">Active exploration site</span><span className="site-name">{siteName} <span style={{ color: 'var(--orange)' }}>·</span> {coordinateLabel}</span></div>
+      <div className="topbar-site"><span className="eyebrow">Exploration site</span><span className="site-name">{site?.name ?? demoMission.site}</span></div>
       <div className="topbar-right">
-        <span className="top-indicator"><span className="status-dot" style={{ background: connected ? 'var(--green)' : health.isError ? 'var(--amber)' : 'var(--cyan)' }} />{connected ? 'API connected' : health.isError ? 'Local demo fallback' : 'Connecting API'}</span>
-        <span className="demo-badge">{site?.is_demo ? 'BACKEND DEMO SEED' : 'SIMULATION MODE'}</span>
-        <span className="mission-clock"><Activity size={12} style={{ verticalAlign: '-2px', marginRight: 5 }} />SOL {String(demoMission.sol).padStart(3, '0')} · {demoMission.missionTime}</span>
+        <span className="top-indicator"><span className="status-dot" style={{ background: apiConnected ? 'var(--green)' : 'var(--amber)' }} /> {apiConnected ? 'Backend connected' : health.isLoading ? 'Connecting backend' : 'Local fallback'}</span>
+        <span className="demo-badge">{site?.is_demo ? 'API DEMO' : 'DEMO'}</span>
+        <div className="display-menu-wrap">
+          <button className="display-trigger" onClick={() => setDisplayOpen(!displayOpen)} aria-expanded={displayOpen} aria-haspopup="dialog"><SlidersHorizontal size={15} /><span>Display</span></button>
+          {displayOpen && <div className="display-popover" role="dialog" aria-label="Display preferences">
+            <div className="display-group"><span>APPEARANCE</span><div className="display-options">
+              <DisplayOption active={colorMode === 'light'} label="Light" icon={<Sun size={14} />} onClick={() => setColorMode('light')} />
+              <DisplayOption active={colorMode === 'dark'} label="Dark" icon={<Moon size={14} />} onClick={() => setColorMode('dark')} />
+              <DisplayOption active={colorMode === 'system'} label="System" icon={<Monitor size={14} />} onClick={() => setColorMode('system')} />
+            </div></div>
+            <div className="display-group"><span>TEXT SIZE</span><div className="text-size-options">
+              {(['compact', 'default', 'large'] as const).map((size) => <button key={size} className={textSize === size ? 'active' : ''} onClick={() => setTextSize(size)}><span className={`text-preview preview-${size}`}>Aa</span><span>{size === 'default' ? 'Standard' : size[0].toUpperCase() + size.slice(1)}</span>{textSize === size && <Check size={12} />}</button>)}
+            </div></div>
+          </div>}
+        </div>
         <CircleDot size={16} color="#78889d" aria-label="Mission link status" />
       </div>
     </header>
   )
+}
+
+function DisplayOption({ active, label, icon, onClick }: { active: boolean; label: string; icon: React.ReactNode; onClick: () => void }) {
+  return <button className={active ? 'active' : ''} onClick={onClick}>{icon}<span>{label}</span>{active && <Check size={11} />}</button>
 }
