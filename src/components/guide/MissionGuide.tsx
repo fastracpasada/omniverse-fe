@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Bot, ChevronRight, Map, MessageCircle, Navigation, PackageCheck, Send, ShieldAlert, X } from 'lucide-react'
 import { scienceTargets } from '../../data/demoMission'
@@ -9,6 +9,7 @@ type Message = { role: 'guide' | 'user'; text: string }
 const suggestions = ['Which travel mode is safest?', 'Compare the three paths', 'What resources do I need?', 'Explain the map risks']
 
 export function MissionGuide() {
+  const inputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<Message[]>([{ role: 'guide', text: 'I can help with this Jezero map, destinations, travel modes, route risks, and required resources.' }])
@@ -17,6 +18,11 @@ export function MissionGuide() {
   const mode = useMissionStore((state) => state.travelMode)
   const target = (customDestination?.id === selectedId ? customDestination : scienceTargets.find((item) => item.id === selectedId)) ?? scienceTargets[0]
   const weather = estimateMarsWeather(target.localPosition, mode)
+  const canSend = input.trim().length > 0
+
+  useEffect(() => {
+    if (open) window.setTimeout(() => inputRef.current?.focus(), 220)
+  }, [open])
 
   const answer = (question: string) => {
     const text = question.toLowerCase()
@@ -36,7 +42,7 @@ export function MissionGuide() {
     setMessages((current) => [...current, { role: 'user', text: trimmed }, { role: 'guide', text: answer(trimmed) }])
     setInput('')
   }
-  const submit = (event: FormEvent) => { event.preventDefault(); send(input) }
+  const submit = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); if (canSend) send(input) }
 
   return <>
     <button className="guide-launcher" onClick={() => setOpen(true)} aria-label="Open mission guide"><MessageCircle size={19} /><span>Ask mission guide</span></button>
@@ -45,7 +51,7 @@ export function MissionGuide() {
       <div className="guide-context"><Map size={14} /><span>Viewing <strong>{target.name}</strong></span><ChevronRight size={13} /></div>
       <div className="guide-messages" aria-live="polite">{messages.map((message, index) => <div key={index} className={`guide-message ${message.role}`}>{message.role === 'guide' && <Bot size={14} />}<p>{message.text}</p></div>)}</div>
       <div className="guide-suggestions"><span>TRY ASKING</span>{suggestions.map((suggestion, index) => <button key={suggestion} onClick={() => send(suggestion)}>{index === 0 ? <ShieldAlert size={13} /> : index === 1 ? <Navigation size={13} /> : index === 2 ? <PackageCheck size={13} /> : <Map size={13} />}{suggestion}</button>)}</div>
-      <form onSubmit={submit}><label htmlFor="guide-question">Ask about this map</label><div><input id="guide-question" value={input} onChange={(event) => setInput(event.target.value)} placeholder="Routes, risks, resources…" maxLength={180} /><button aria-label="Send question"><Send size={15} /></button></div><small>Limited to current mission-planning topics</small></form>
+      <form onSubmit={submit}><label htmlFor="guide-question">Ask about this map</label><div><input ref={inputRef} id="guide-question" name="guide-question" value={input} onChange={(event) => setInput(event.target.value)} placeholder="Routes, risks, resources…" maxLength={180} autoComplete="off" /><button type="submit" disabled={!canSend} aria-label={canSend ? 'Send question' : 'Enter a question to send'} title={canSend ? 'Send question' : 'Enter a question first'}><Send size={15} aria-hidden="true" /></button></div><small>Press Enter or use Send · limited to current mission-planning topics</small></form>
     </aside>
     {open && <button className="guide-scrim" onClick={() => setOpen(false)} aria-label="Close mission guide overlay" />}
   </>
