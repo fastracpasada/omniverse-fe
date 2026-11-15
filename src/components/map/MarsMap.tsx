@@ -26,6 +26,8 @@ import { useMissionData } from '../../hooks/useMissionData'
 import { apiTargetToScienceTarget, missionApi } from '../../services/missionApi'
 import type { ApiHazard } from '../../types/mission'
 import { mergeMissionTargets } from '../../utils/missionLocations'
+import { distanceRisk } from '../../utils/safetyThresholds'
+import { SourceInfo } from '../SourceInfo'
 
 interface MarsMapProps { large?: boolean; showLegend?: boolean }
 
@@ -60,15 +62,18 @@ function makeDemLayer(kind: 'elevation' | 'slope') {
     if (value == null) { image.data[offset + 3] = 0; continue }
     if (kind === 'elevation') {
       const normalized = Math.max(0, Math.min(1, (value + 2700) / 900))
-      image.data[offset] = Math.round(35 + normalized * 210); image.data[offset + 1] = Math.round(65 + normalized * 100); image.data[offset + 2] = Math.round(150 - normalized * 115)
+      const stops = normalized < .5 ? [28 + normalized * 2 * 66, 72 + normalized * 2 * 82, 140 - normalized * 2 * 22] : [94 + (normalized - .5) * 2 * 145, 154 - (normalized - .5) * 2 * 72, 118 - (normalized - .5) * 2 * 72]
+      image.data[offset] = Math.round(stops[0]); image.data[offset + 1] = Math.round(stops[1]); image.data[offset + 2] = Math.round(stops[2])
     } else {
       const right = dem.elevations[row * dem.width + Math.min(dem.width - 1, col + 1)] ?? value
       const down = dem.elevations[Math.min(dem.height - 1, row + 1) * dem.width + col] ?? value
       const slope = Math.atan(Math.hypot(right - value, down - value) / 250) * 180 / Math.PI
       const normalized = Math.max(0, Math.min(1, slope / 18))
-      image.data[offset] = Math.round(40 + normalized * 215); image.data[offset + 1] = Math.round(190 - normalized * 145); image.data[offset + 2] = Math.round(95 - normalized * 55)
+      image.data[offset] = normalized < .5 ? Math.round(45 + normalized * 2 * 210) : 255
+      image.data[offset + 1] = normalized < .5 ? Math.round(190 + normalized * 2 * 20) : Math.round(210 - (normalized - .5) * 2 * 160)
+      image.data[offset + 2] = Math.round(95 - normalized * 55)
     }
-    image.data[offset + 3] = 165
+    image.data[offset + 3] = 205
   }
   context.putImageData(image, 0, 0)
   return new ImageLayer({ visible: false, opacity: .72, source: new ImageStatic({ url: canvas.toDataURL('image/png'), imageExtent: MARS_LOCAL_EXTENT, projection: marsGeoProjection, interpolate: true }) })
@@ -104,13 +109,18 @@ function makeTerrainLayer() {
 function makeHazardLayer(apiHazards: ApiHazard[]) {
   if (apiHazards.length) {
     const features = apiHazards.map((item) => { const feature = new Feature(new Polygon([item.geometry.exterior.map(localMetresToMars)])); feature.setProperties({ kind: 'hazard', name: item.name, risk: item.risk_score }); return feature })
-    return new VectorLayer({ source: new VectorSource({ features }), style: new Style({ fill: new Fill({ color: 'rgba(216,115,107,.22)' }), stroke: new Stroke({ color: '#D8736B', width: 1.5, lineDash: [6, 5] }) }) })
+    return new VectorLayer({ source: new VectorSource({ features }), style: hazardStyle })
   }
   const hazardCoordinates: [number, number][] = [[1700, 3500], [3600, 4400], [5000, 3000], [4100, 1700], [2400, 1900], [1700, 3500]]
   const hazard = new Feature(new Polygon([hazardCoordinates.map(localMetresToMars)]))
-  hazard.set('kind', 'hazard')
-  return new VectorLayer({ source: new VectorSource({ features: [hazard] }), style: new Style({ fill: new Fill({ color: 'rgba(249, 115, 22, .18)' }), stroke: new Stroke({ color: 'rgba(255, 160, 92, .75)', width: 1.5, lineDash: [6, 5] }) }) })
+  hazard.setProperties({ kind: 'hazard', name: 'Unsurveyed rough-terrain zone', risk: 'ELEVATED' })
+  return new VectorLayer({ source: new VectorSource({ features: [hazard] }), style: hazardStyle })
 }
+
+const hazardStyle = [
+  new Style({ fill: new Fill({ color: 'rgba(216, 75, 75, .32)' }), stroke: new Stroke({ color: 'rgba(255, 210, 190, .45)', width: 5 }) }),
+  new Style({ stroke: new Stroke({ color: '#ff665e', width: 2, lineDash: [7, 5] }), text: new Text({ text: 'POTENTIAL HAZARD', font: '700 10px sans-serif', fill: new Fill({ color: '#fff1ea' }), stroke: new Stroke({ color: 'rgba(80,10,10,.9)', width: 3 }) }) }),
+]
 
 function selectedTarget(targetId: string, customDestination: ScienceTarget | null, targets: ScienceTarget[]) {
   return customDestination?.id === targetId ? customDestination : targets.find((item) => item.id === targetId) ?? targets[0]
@@ -183,6 +193,7 @@ export function MarsMap({ large = false, showLegend = true }: MarsMapProps) {
   const [coordinate, setCoordinate] = useState('18.40000° N · 77.50000° E')
   const [mapTheme, setMapTheme] = useState<'schematic' | 'realistic'>('realistic')
   const [terrainInspection, setTerrainInspection] = useState<{ elevationM: number; slopeDeg: number; classification: string; source?: string } | null>(null)
+  const [hazardInspection, setHazardInspection] = useState<{ name: string; risk: string; source: string } | null>(null)
   const layers = useMissionStore((state) => state.layers)
   const selectedScienceId = useMissionStore((state) => state.selectedScienceId)
   const travelMode = useMissionStore((state) => state.travelMode)
@@ -193,6 +204,7 @@ export function MarsMap({ large = false, showLegend = true }: MarsMapProps) {
   const setCoordinateStore = useMissionStore((state) => state.setCoordinate)
   const selectScience = useMissionStore((state) => state.selectScience)
   const setCustomDestination = useMissionStore((state) => state.setCustomDestination)
+  const thermalVisible = layers.find((layer) => layer.id === 'thermal')?.visible ?? false
 
   useEffect(() => {
     if (!targetRef.current) return
@@ -219,6 +231,11 @@ export function MarsMap({ large = false, showLegend = true }: MarsMapProps) {
       const feature = map.forEachFeatureAtPixel(event.pixel, (item) => item)
       const id = feature?.get('markerId')
       const kind = feature?.get('kind')
+      if (kind === 'hazard') {
+        setHazardInspection({ name: feature?.get('name') ?? 'Modeled mobility hazard', risk: String(feature?.get('risk') ?? 'ELEVATED'), source: apiHazards.data?.items.length ? 'Backend hazard record' : 'Modeled planning polygon' })
+        return
+      }
+      setHazardInspection(null)
       if (typeof id === 'string' && id !== 'habitat' && kind !== 'origin') selectScience(id)
       else if (id !== 'habitat') {
         const [longitude, latitude] = event.coordinate
@@ -227,7 +244,7 @@ export function MarsMap({ large = false, showLegend = true }: MarsMapProps) {
         setTerrainInspection({ elevationM: localSample?.elevationM ?? 0, slopeDeg: localSample?.slopeDeg ?? 0, classification: localSample?.classification ?? 'outside local terrain coverage', source: 'Local CTX grid' })
         if (siteId) void missionApi.getTerrainSample(siteId, { x_m: localPosition[0], y_m: localPosition[1] }).then((sample) => { const value = sample as { elevation_m?: number; slope_deg?: number; terrain_category?: string; risk_score?: number }; setTerrainInspection({ elevationM: Number(value.elevation_m ?? 0), slopeDeg: Number(value.slope_deg ?? 0), classification: `${value.terrain_category ?? 'backend sample'} · risk ${Number(value.risk_score ?? 0).toFixed(2)}`, source: 'Backend terrain sample' }) }).catch(() => undefined)
         const distanceKm = Math.hypot(...localPosition) / 1000
-        setCustomDestination({ id: `CUSTOM-${latitude.toFixed(5)}-${longitude.toFixed(5)}`, name: 'Custom map point', category: 'Map-selected coordinate', localPosition, coordinates: [longitude, latitude], distanceKm, risk: distanceKm > 8 ? 'ELEVATED' : distanceKm > 2 ? 'MODERATE' : 'LOW', description: `Selected at ${latitude.toFixed(5)}°, ${longitude.toFixed(5)}°. Terrain and route safety have not been validated.`, objective: 'Explore custom map point', status: 'PLANNED', source: 'CUSTOM COORDINATE' })
+        setCustomDestination({ id: `CUSTOM-${latitude.toFixed(5)}-${longitude.toFixed(5)}`, name: 'Custom map point', category: 'Map-selected coordinate', localPosition, coordinates: [longitude, latitude], distanceKm, risk: distanceRisk(distanceKm), description: `Selected at ${latitude.toFixed(5)}°, ${longitude.toFixed(5)}°. Terrain and route safety have not been validated.`, objective: 'Explore custom map point', status: 'PLANNED', source: 'CUSTOM COORDINATE' })
         const label = `${latitude.toFixed(5)}° N · ${longitude.toFixed(5)}° E`
         setCoordinate(label)
         setCoordinateStore(label)
@@ -271,21 +288,25 @@ export function MarsMap({ large = false, showLegend = true }: MarsMapProps) {
   }
 
   return <div className={`panel map-panel ${large ? 'map-large-panel' : ''}`} ref={mapShellRef}>
-    <div className="panel-heading"><div className="panel-title"><MapIcon /> JEZERO CRATER · LOCAL MAP</div><span className="demo-badge">VISUAL SIMULATION</span></div>
+    <div className="panel-heading"><div className="panel-title"><MapIcon /> JEZERO CRATER · LOCAL MAP <SourceInfo label="NASA Mars Trek MRO CTX optical mosaic; USGS CTX elevation model; locally derived slope; modeled hazard overlay." href="https://trek.nasa.gov/mars/" /></div><span className="demo-badge">VISUAL SIMULATION</span></div>
     <div className={`map-frame ${large ? 'map-large' : ''}`}>
       <div className="map-caption">JEZERO CRATER · NORTH UP · MARS 2000</div>
       <div className="map-theme-switch" role="group" aria-label="Map appearance">
-        <button className={mapTheme === 'realistic' ? 'active' : ''} onClick={() => setMapTheme('realistic')} aria-pressed={mapTheme === 'realistic'}><Satellite size={12} /> NASA CTX</button>
-        <button className={mapTheme === 'schematic' ? 'active' : ''} onClick={() => setMapTheme('schematic')} aria-pressed={mapTheme === 'schematic'}><MapIconLucide size={12} /> Schematic</button>
+        <button className={mapTheme === 'realistic' ? 'active' : ''} onClick={() => setMapTheme('realistic')} aria-pressed={mapTheme === 'realistic'}><Satellite size={12} /> NASA CTX</button><button className={mapTheme === 'schematic' ? 'active' : ''} onClick={() => setMapTheme('schematic')} aria-pressed={mapTheme === 'schematic'}><MapIconLucide size={12} /> Schematic</button>
       </div>
       <div ref={targetRef} className={`map-canvas ${mapTheme === 'realistic' ? 'realistic-terrain' : ''}`} role="application" aria-label={`Interactive ${mapTheme} map of a local Mars mission area`} />
       <div className="map-zoom-controls"><button onClick={() => zoomBy(0.5)} aria-label="Zoom in">+</button><button onClick={() => zoomBy(-0.5)} aria-label="Zoom out">−</button></div>
       <button className="map-fullscreen" onClick={toggleFullscreen} title="Toggle map fullscreen" aria-label="Toggle map fullscreen"><Expand size={14} /></button>
       <button className="map-locate" onClick={resetView} title="Reset map view" aria-label="Reset map view"><LocateFixed size={14} /></button>
       {showLegend && <div className="map-legend"><span className="legend-item"><span className="legend-dot" style={{ background: 'var(--orange)' }} />Habitat</span><span className="legend-item"><span className="legend-dot" style={{ background: 'var(--cyan)' }} />Target</span><span className="legend-item"><span className="legend-line route-walk" />Walk</span><span className="legend-item"><span className="legend-line route-rover" />Rover</span><span className="legend-item"><span className="legend-line route-air" />Flight</span></div>}
-      <div className="map-unverified">{mapTheme === 'realistic' ? 'NASA MARS TREK · MRO CTX JEZERO MOSAIC' : 'SCHEMATIC TERRAIN'} · DEM ROUTING</div>
+      {layers.find((layer) => layer.id === 'elevation')?.visible && <div className="terrain-ramp elevation-ramp"><strong>ELEVATION</strong><span /><small><b>−2700 m</b><b>−1800 m</b></small></div>}
+      {layers.find((layer) => layer.id === 'slope')?.visible && <div className="terrain-ramp slope-ramp"><strong>SLOPE</strong><span /><small><b>0°</b><b>15°+</b></small></div>}
+      {thermalVisible && <aside className="thermal-regional-inset"><header><strong>MGS TES · REGIONAL CONTEXT</strong><SourceInfo label="Mars Global Surveyor TES thermal inertia · 3 km source resolution · Putzig et al. 2005. Regional material-property context only." href="https://trek.nasa.gov/tiles/apidoc/trekAPI.html?body=mars" /></header><div className="thermal-inset-image"><img src="https://trek.nasa.gov/tiles/Mars/EQ/TES_Thermal_Inertia/1.0.0/default/default028mm/1/0/2.png" alt="Regional MGS TES thermal inertia context containing Jezero Crater" /><span title="Approximate Jezero planning area" /></div><p><b>Jezero planning area</b> is marked by the box. This 3 km regional product provides broad surface-material context only.</p><small>Not temperature · not used for route safety, ETA, or local hazards</small></aside>}
+      {layers.find((layer) => layer.id === 'hazards')?.visible && <div className="hazard-key"><i /> POTENTIAL HAZARD · MODELED</div>}
+      <div className="map-unverified">{mapTheme === 'realistic' ? 'NASA MARS TREK · MRO CTX JEZERO MOSAIC · DEM ROUTING' : 'SCHEMATIC TERRAIN · DEM ROUTING'}</div>
       <div className="map-coordinate">{coordinate}</div>
       {terrainInspection && <div className="terrain-inspection"><span>SELECTED TERRAIN · {terrainInspection.source}</span><strong>{terrainInspection.elevationM.toFixed(0)} m elevation</strong><small>{terrainInspection.slopeDeg.toFixed(1)}° slope · {terrainInspection.classification}</small></div>}
+      {hazardInspection && <div className="hazard-inspection"><span>POTENTIAL HAZARD</span><strong>{hazardInspection.name}</strong><small>Risk: {hazardInspection.risk} · {hazardInspection.source}</small><button onClick={() => setHazardInspection(null)}>Dismiss</button></div>}
     </div>
     <div className="map-meta"><span>Surface paths use slope and hazard costs · flight remains direct</span><span>{terrainDataLabel}</span></div>
   </div>

@@ -1,14 +1,12 @@
-import { Activity, ChevronLeft, ChevronRight, FileText, FlaskConical, Gauge, Map, Settings2, ShieldCheck, Wifi } from 'lucide-react'
+import { Activity, ChevronLeft, ChevronRight, FlaskConical, Gauge, Settings2, ShieldCheck, Wifi } from 'lucide-react'
 import { NavLink } from 'react-router-dom'
 import { useMissionStore } from '../../stores/missionStore'
 import { useMissionData } from '../../hooks/useMissionData'
 
 const navigation = [
   { to: '/', label: 'Overview', icon: Gauge, end: true },
-  { to: '/explorer', label: 'Explore map', icon: Map },
   { to: '/science', label: 'Science', icon: FlaskConical },
   { to: '/eva', label: 'Operations', icon: Activity },
-  { to: '/reports', label: 'Reports', icon: FileText },
   { to: '/settings', label: 'Settings', icon: Settings2 },
 ]
 

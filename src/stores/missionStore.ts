@@ -4,6 +4,7 @@ import type { ApiMission, ApiPlannedRoute, ApiSimulationState, MapLayerDefinitio
 import type { ScienceTarget } from '../types/mission'
 
 interface MissionState {
+  missionConfig: MissionConfig
   travelMode: 'walk' | 'rover' | 'air'
   routeProfile: 'safe' | 'fast'
   colorMode: 'dark' | 'light' | 'system'
@@ -41,15 +42,42 @@ interface MissionState {
   setBackendRoutes: (routes: ApiPlannedRoute[]) => void
   setSavedRouteId: (id: string | null) => void
   setSimulation: (simulation: ApiSimulationState | null) => void
+  updateMissionConfig: (updates: Partial<MissionConfig>) => void
+}
+
+export interface MissionConfig {
+  missionTitle: string
+  scienceObjective: string
+  successCriteria: string
+  crewOneName: string
+  crewOneRole: string
+  crewTwoName: string
+  crewTwoRole: string
+}
+
+const defaultMissionConfig: MissionConfig = {
+  missionTitle: 'Jezero Delta Sediment Expedition',
+  scienceObjective: "Reconstruct Jezero's ancient river-to-lake environment",
+  successCriteria: 'Context imagery and two paired samples returned with complete custody records',
+  crewOneName: 'R. Chen',
+  crewOneRole: 'Science lead and sample acquisition',
+  crewTwoName: 'A. Okafor',
+  crewTwoRole: 'Navigation, imagery, and sample custody',
+}
+
+function loadMissionConfig() {
+  try { return { ...defaultMissionConfig, ...JSON.parse(localStorage.getItem('mars-nav-mission-config') ?? '{}') } }
+  catch { return defaultMissionConfig }
 }
 
 export const useMissionStore = create<MissionState>((set) => ({
+  missionConfig: loadMissionConfig(),
   travelMode: 'rover',
   routeProfile: 'safe',
   colorMode: 'dark',
   textSize: 'default',
   sidebarCollapsed: false,
-  selectedScienceId: 'ST-01',
+  selectedScienceId: localStorage.getItem('mars-nav-primary-target') ?? 'NASA-05',
   customDestination: null,
   routeOrigin: { id: 'habitat', name: 'HAB-01 Habitat', category: 'Mission habitat', localPosition: [0, 0], distanceKm: 0, risk: 'LOW', description: 'Primary mission habitat and default route origin.', objective: 'Depart from habitat', status: 'PLANNED', source: 'MISSION DEMO' },
   selectedCoordinate: 'LOCAL GRID · 0 m E / 0 m N',
@@ -63,7 +91,7 @@ export const useMissionStore = create<MissionState>((set) => ({
   savedRouteId: null,
   simulation: null,
   toggleSidebar: () => set((state) => ({ sidebarCollapsed: !state.sidebarCollapsed })),
-  selectScience: (id) => set({ selectedScienceId: id, customDestination: null }),
+  selectScience: (id) => { localStorage.setItem('mars-nav-primary-target', id); set({ selectedScienceId: id, customDestination: null }) },
   setCustomDestination: (customDestination) => set({ customDestination, selectedScienceId: customDestination.id }),
   setRouteOrigin: (routeOrigin) => set({ routeOrigin }),
   setCoordinate: (coordinate) => set({ selectedCoordinate: coordinate }),
@@ -81,4 +109,9 @@ export const useMissionStore = create<MissionState>((set) => ({
   setBackendRoutes: (backendRoutes) => set({ backendRoutes }),
   setSavedRouteId: (savedRouteId) => set({ savedRouteId }),
   setSimulation: (simulation) => set({ simulation }),
+  updateMissionConfig: (updates) => set((state) => {
+    const missionConfig = { ...state.missionConfig, ...updates }
+    localStorage.setItem('mars-nav-mission-config', JSON.stringify(missionConfig))
+    return { missionConfig }
+  }),
 }))
