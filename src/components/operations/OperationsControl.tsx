@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Activity, AlertTriangle, Battery, Clock3, Footprints, Gauge, Pause, Plane, Play, Radio, RotateCcw, ShieldCheck, Truck } from 'lucide-react'
+import { useEffect, useMemo } from 'react'
+import { Activity, Battery, Clock3, Footprints, Gauge, Plane, Radio, ShieldCheck, Truck } from 'lucide-react'
 import { MarsMap } from '../map/MarsMap'
 import { initialTelemetry, scienceTargets } from '../../data/demoMission'
 import { useMissionStore } from '../../stores/missionStore'
-import { useMutation } from '@tanstack/react-query'
-import { apiTargetToScienceTarget, missionApi } from '../../services/missionApi'
+import { apiTargetToScienceTarget } from '../../services/missionApi'
 import { useMissionData } from '../../hooks/useMissionData'
 import { mergeMissionTargets } from '../../utils/missionLocations'
 
@@ -19,24 +18,20 @@ export function OperationsControl() {
   const elapsed = useMissionStore((state) => state.telemetryElapsedSeconds)
   const running = useMissionStore((state) => state.simulationRunning)
   const setRunning = useMissionStore((state) => state.setSimulationRunning)
-  const reset = useMissionStore((state) => state.resetSimulation)
   const tick = useMissionStore((state) => state.tickSimulation)
   const mode = useMissionStore((state) => state.travelMode)
   const setMode = useMissionStore((state) => state.setTravelMode)
   const selectedId = useMissionStore((state) => state.selectedScienceId)
+  const missionConfig = useMissionStore((state) => state.missionConfig)
   const customDestination = useMissionStore((state) => state.customDestination)
-  const [notice, setNotice] = useState('Ready for pre-operation checks')
   const savedRouteId = useMissionStore((state) => state.savedRouteId)
   const backendSimulation = useMissionStore((state) => state.simulation)
-  const setBackendSimulation = useMissionStore((state) => state.setSimulation)
   const backendControl = apiConnected && mode === 'walk' && Boolean(savedRouteId)
-  const startBackend = useMutation({ mutationFn: () => missionApi.startSimulation(savedRouteId!), onSuccess: ({ session }) => { setBackendSimulation(session); setRunning(session.status === 'running'); setNotice('Backend EVA session started') }, onError: (error) => setNotice(error.message) })
-  const controlBackend = useMutation({ mutationFn: async (action: 'pause' | 'resume' | 'advance') => { if (!backendSimulation) throw new Error('Start the backend EVA session first.'); return action === 'pause' ? missionApi.pauseSimulation(backendSimulation.id) : action === 'resume' ? missionApi.resumeSimulation(backendSimulation.id) : missionApi.advanceSimulation(backendSimulation.id) }, onSuccess: (session) => { setBackendSimulation(session); setRunning(session.status === 'running'); setNotice(`Backend EVA ${session.status}`) }, onError: (error) => setNotice(error.message) })
-  const resetBackend = useMutation({ mutationFn: async () => { if (backendSimulation) await missionApi.resetSimulation(backendSimulation.id) }, onSuccess: () => { setBackendSimulation(null); reset(); setNotice('Backend EVA session reset') }, onError: (error) => setNotice(error.message) })
   const targetList = useMemo(() => mergeMissionTargets(site && apiTargets.data ? apiTargets.data.items.map((item) => apiTargetToScienceTarget(item, site)) : [], scienceTargets), [site, apiTargets.data])
   const target = (customDestination?.id === selectedId ? customDestination : targetList.find((item) => item.id === selectedId)) ?? targetList[0]
   const active = modes[mode]
   const Icon = active.icon
+  const operator = mode === 'walk' ? `${missionConfig.crewOneName} · EVA-1` : mode === 'rover' ? `${missionConfig.crewOneName} + ${missionConfig.crewTwoName}` : 'Autonomous scout'
 
   useEffect(() => {
     if (!running) return
@@ -49,32 +44,19 @@ export function OperationsControl() {
   const power = backendControl && backendSimulation ? backendSimulation.battery_remaining_pct : Math.max(0, initialTelemetry.batteryPercent - Math.floor(missionSeconds / (mode === 'air' ? 70 : 120)))
   const progress = backendControl && backendSimulation ? Math.min(100, Math.round(backendSimulation.distance_along_route_m / Math.max(1, backendSimulation.total_route_distance_m) * 100)) : Math.min(100, Math.round(missionSeconds / Math.max(1, target.distanceKm * (mode === 'walk' ? 1200 : mode === 'rover' ? 320 : 180)) * 100))
 
-  const toggle = () => {
-    if (backendControl) {
-      if (!backendSimulation) startBackend.mutate()
-      else controlBackend.mutate(backendSimulation.status === 'running' ? 'pause' : 'resume')
-      return
-    }
-    setRunning(!running)
-    setNotice(running ? `${active.label} paused` : `${active.label} started`)
-  }
-  const resetAll = () => { if (backendControl && backendSimulation) { resetBackend.mutate(); return }; reset(); setNotice(`${active.label} reset to pre-operation state`) }
-  const returnHome = () => { setRunning(false); setNotice(mode === 'air' ? 'Scout recalled to habitat' : 'Emergency return route activated') }
-
   return <div className="page-wrap operations-page">
     <header className="operations-heading"><div><span className="welcome-label">SURFACE OPERATIONS / UNIFIED CONTROL</span><h1>EVA & scout controls</h1><p>Control walking, rover-assisted EVA, and autonomous reconnaissance from one workspace.</p></div><span className={`operations-status ${running ? 'running' : ''}`}><i />{running ? 'OPERATION ACTIVE' : 'STANDBY'}</span></header>
 
-    <div className="operation-mode-tabs" role="tablist" aria-label="Operation type">{(Object.keys(modes) as Array<keyof typeof modes>).map((key) => { const item = modes[key]; const ModeIcon = item.icon; return <button key={key} role="tab" aria-selected={mode === key} className={mode === key ? 'active' : ''} onClick={() => { setRunning(false); setMode(key); setNotice(`${item.label} controls selected`) }}><ModeIcon size={18} /><span><strong>{item.label}</strong><small>{key === 'air' ? 'Uncrewed reconnaissance' : key === 'walk' ? 'Short-range surface activity' : 'Crew and cargo traverse'}</small></span></button> })}</div>
+    <div className="operation-mode-tabs" role="tablist" aria-label="Operation type">{(Object.keys(modes) as Array<keyof typeof modes>).map((key) => { const item = modes[key]; const ModeIcon = item.icon; return <button key={key} role="tab" aria-selected={mode === key} className={mode === key ? 'active' : ''} onClick={() => { setRunning(false); setMode(key) }}><ModeIcon size={18} /><span><strong>{item.label}</strong><small>{key === 'air' ? 'Uncrewed reconnaissance' : key === 'walk' ? 'Short-range surface activity' : 'Crew and cargo traverse'}</small></span></button> })}</div>
 
     <div className="operations-grid">
       <section className="panel operation-console">
         <div className="panel-heading"><div className="panel-title"><Icon size={14} /> {active.short} CONTROL</div><span className="demo-badge">{backendControl ? 'BACKEND EVA' : 'SIMULATED'}</span></div>
         <div className="panel-body">
-          <div className="operation-identity"><span className={`operation-icon ${active.accent}`}><Icon size={22} /></span><div><h2>{active.operator}</h2><p>{active.system}</p></div><span className="status-running"><span className="status-dot" />{running ? 'RUNNING' : 'PAUSED'}</span></div>
+          <div className="operation-identity"><span className={`operation-icon ${active.accent}`}><Icon size={22} /></span><div><h2>{operator}</h2><p>{active.system}</p></div><span className="status-running"><span className="status-dot" />{running ? 'RUNNING' : 'PAUSED'}</span></div>
           <div className="operation-clock"><span>ELAPSED OPERATION TIME</span><strong>{formatTime(missionSeconds)}</strong></div>
           <div className="operation-metrics"><Metric icon={<Activity />} label={mode === 'air' ? 'Signal' : 'Oxygen'} value={`${mode === 'air' ? 94 : oxygen}%`} /><Metric icon={<Battery />} label={mode === 'walk' ? 'Suit battery' : 'Power'} value={`${power}%`} /><Metric icon={<Gauge />} label="Route progress" value={`${progress}%`} /><Metric icon={<Radio />} label="Link" value="NOMINAL" /></div>
-          <div className="operation-buttons"><button className="primary-button" onClick={toggle} disabled={startBackend.isPending || controlBackend.isPending}>{running ? <Pause size={14} /> : <Play size={14} />}{running ? 'Pause' : 'Start'} {active.label}</button>{backendControl && backendSimulation && <button className="secondary-button" onClick={() => controlBackend.mutate('advance')} disabled={!running || controlBackend.isPending}><Clock3 size={14} />Advance 5 min</button>}<button className="secondary-button" onClick={resetAll}><RotateCcw size={14} />Reset</button><button className="danger-button" onClick={returnHome}><AlertTriangle size={14} />{mode === 'air' ? 'Recall scout' : 'Emergency return'}</button></div>
-          <div className="operation-notice" aria-live="polite"><ShieldCheck size={14} />{notice}</div>
+          <div className="operation-notice" aria-live="polite"><ShieldCheck size={14} />{active.label} statistics are read-only. Start, pause, reset, and emergency actions are handled outside this dashboard.</div>
         </div>
       </section>
 

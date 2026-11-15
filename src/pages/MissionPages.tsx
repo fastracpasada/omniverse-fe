@@ -20,7 +20,6 @@ import {
   missionRoutes,
   scienceTargets,
 } from "../data/demoMission";
-import { MapLayerControl } from "../components/map/MapLayerControl";
 import { MarsMap } from "../components/map/MarsMap";
 import { useMissionStore } from "../stores/missionStore";
 import type { MissionRoute } from "../types/mission";
@@ -28,27 +27,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useMissionData } from "../hooks/useMissionData";
 import { apiTargetToScienceTarget, missionApi } from "../services/missionApi";
 import { mergeMissionTargets } from "../utils/missionLocations";
-
-export function MarsExplorer() {
-  return (
-    <div className="page-wrap">
-      <PageHeading
-        kicker="SURFACE DATA / EXPLORER"
-        title="Mars Explorer"
-        description="Explore the Jezero demo area and inspect available map layers."
-      />
-      <div className="page-content-grid">
-        <MarsMap large />
-        <MapLayerControl />
-      </div>
-      <div className="info-strip">
-        <ShieldAlert size={14} /> NASA Mars Trek imagery and a USGS CTX terrain
-        model are configured. Hazard zones, science targets, mission
-        constraints, weather, and telemetry remain modeled or simulated.
-      </div>
-    </div>
-  );
-}
+import { SourceInfo } from "../components/SourceInfo";
 
 export function RoutePlanner() {
   const selectedScienceId = useMissionStore((state) => state.selectedScienceId);
@@ -200,13 +179,14 @@ export function ScienceObjectives() {
     <div className="page-wrap">
       <PageHeading
         kicker="SCIENCE / TARGET CATALOG"
-        title="Science objectives"
-        description="Points of interest and planned observations for the demo traverse."
+        title="Team-selected science objectives"
+        description="The mission team decides which locations and observations to prioritize; the dashboard only records the selection."
+        source={{ label: "NASA Mars 2020 Jezero campaign context; mission-area markers in this prototype are approximate", href: "https://science.nasa.gov/mission/mars-2020-perseverance/" }}
       />
       <div className="objective-status-row">
         <span className="demo-badge">{targetList.length} {apiTargets.data ? "BACKEND + DEMO TARGETS" : "DEMO TARGETS"}</span>
         <span className="quiet-note">
-          All locations and observations are simulated.
+          No science priority is assigned automatically. All locations and observations are simulated.
         </span>
       </div>
       <div className="target-grid">
@@ -487,7 +467,7 @@ export function MissionReports() {
   );
 }
 
-export function Settings() {
+function LegacySettings() {
   const layers = useMissionStore((state) => state.layers);
   const toggleLayer = useMissionStore((state) => state.toggleLayer);
   const [compact, setCompact] = useState(false);
@@ -609,21 +589,77 @@ export function Settings() {
     </div>
   );
 }
+void LegacySettings;
+
+export function Settings() {
+  const config = useMissionStore((state) => state.missionConfig);
+  const updateConfig = useMissionStore((state) => state.updateMissionConfig);
+  const selectedTargetId = useMissionStore((state) => state.selectedScienceId);
+  const selectScience = useMissionStore((state) => state.selectScience);
+  const missionTargets = scienceTargets.filter((target) => target.source === "NASA MISSION AREA");
+  const selectedTarget = missionTargets.find((target) => target.id === selectedTargetId) ?? missionTargets[0];
+  return (
+    <div className="page-wrap mission-settings">
+      <PageHeading
+        kicker="MISSION / USER CONFIGURATION"
+        title="Mission settings"
+        description="Edit mission-owned information that changes during expedition planning. Scientific datasets and safety constraints remain protected."
+      />
+      <div className="mission-settings-grid">
+        <div className="settings-editor-stack">
+          <section className="panel editable-settings-panel">
+            <PanelHeading icon={<Settings2 size={14} />} title="MISSION IDENTITY" badge="EDITABLE" />
+            <div className="panel-body settings-form-grid">
+              <SettingsField label="Mission title" help="Shown in Overview and Science."><input value={config.missionTitle} onChange={(event) => updateConfig({ missionTitle: event.target.value })} /></SettingsField>
+              <SettingsField label="Primary mission target" help="Updates the destination used by Science and Overview."><select value={selectedTarget?.id} onChange={(event) => selectScience(event.target.value)}>{missionTargets.map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</select></SettingsField>
+              <SettingsField wide label="Science objective" help="Defined by the mission science team; the dashboard does not choose it."><textarea value={config.scienceObjective} onChange={(event) => updateConfig({ scienceObjective: event.target.value })} /></SettingsField>
+              <SettingsField wide label="Success criteria" help="The evidence required before the expedition can be considered scientifically complete."><textarea value={config.successCriteria} onChange={(event) => updateConfig({ successCriteria: event.target.value })} /></SettingsField>
+            </div>
+          </section>
+
+          <section className="panel editable-settings-panel">
+            <PanelHeading icon={<Activity size={14} />} title="CREW ASSIGNMENTS" badge="EDITABLE" />
+            <div className="panel-body crew-settings-grid">
+              <div className="crew-editor"><span>EVA-1</span><SettingsField label="Crew member name" help="Displayed in Operations and Science."><input value={config.crewOneName} onChange={(event) => updateConfig({ crewOneName: event.target.value })} /></SettingsField><SettingsField label="Expedition role" help="Responsibilities during field activities."><textarea value={config.crewOneRole} onChange={(event) => updateConfig({ crewOneRole: event.target.value })} /></SettingsField></div>
+              <div className="crew-editor"><span>EVA-2</span><SettingsField label="Crew member name" help="Displayed in Operations and Science."><input value={config.crewTwoName} onChange={(event) => updateConfig({ crewTwoName: event.target.value })} /></SettingsField><SettingsField label="Expedition role" help="Responsibilities during field activities."><textarea value={config.crewTwoRole} onChange={(event) => updateConfig({ crewTwoRole: event.target.value })} /></SettingsField></div>
+            </div>
+          </section>
+        </div>
+
+        <aside className="settings-preview-stack">
+          <section className="panel settings-preview"><PanelHeading icon={<Gauge size={14} />} title="LIVE MISSION PREVIEW" /><div className="panel-body"><span>MISSION</span><h2>{config.missionTitle || "Untitled mission"}</h2><small>PRIMARY TARGET</small><strong>{selectedTarget?.name ?? "No target selected"}</strong><p>{config.scienceObjective || "No science objective entered."}</p><div><b>EVA-1</b><span>{config.crewOneName || "Unassigned"} · {config.crewOneRole || "Role not assigned"}</span></div><div><b>EVA-2</b><span>{config.crewTwoName || "Unassigned"} · {config.crewTwoRole || "Role not assigned"}</span></div></div></section>
+          <section className="panel locked-settings"><PanelHeading icon={<ShieldAlert size={14} />} title="PROTECTED SYSTEM VALUES" badge="READ ONLY" /><div className="panel-body"><p>These values affect data integrity or safety calculations and cannot be edited from the user interface.</p><LockedSetting label="Exploration site" value="Jezero Crater" /><LockedSetting label="Maximum surface slope" value="15°" /><LockedSetting label="Minimum return reserve" value="60 min" /><LockedSetting label="Coordinate reference" value="Mars 2000 / local metric frame" /><LockedSetting label="NASA data sources" value="CTX · TES · MEDA context" /><LockedSetting label="Hazard provenance" value="Backend or clearly modeled" /></div></section>
+          <div className="settings-save-note"><Check size={15} /><span><strong>Saved automatically</strong><small>Mission configuration persists in this browser and updates connected tabs immediately.</small></span></div>
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function SettingsField({ label, help, wide = false, children }: { label: string; help: string; wide?: boolean; children: React.ReactNode }) {
+  return <label className={`mission-settings-field ${wide ? "wide" : ""}`}><span>{label}</span>{children}<small>{help}</small></label>;
+}
+
+function LockedSetting({ label, value }: { label: string; value: string }) {
+  return <div className="locked-setting"><span>{label}</span><strong>{value}</strong></div>;
+}
 
 function PageHeading({
   kicker,
   title,
   description,
+  source,
 }: {
   kicker: string;
   title: string;
   description: string;
+  source?: { label: string; href: string };
 }) {
   return (
     <div className="page-heading">
       <div>
         <div className="page-kicker">{kicker}</div>
-        <h1 className="page-title">{title}</h1>
+        <h1 className="page-title">{title} {source && <SourceInfo label={source.label} href={source.href} />}</h1>
         <p className="page-description">{description}</p>
       </div>
       <span className="demo-badge">DEMO ENVIRONMENT</span>

@@ -1,16 +1,17 @@
 import { AlertTriangle, Eye, Gauge, Thermometer, Wind } from 'lucide-react'
 import type { ScienceTarget } from '../../types/mission'
 import { estimateMarsWeather, observationContext, weatherMethod } from '../../utils/marsWeather'
+import { SourceInfo } from '../SourceInfo'
 
 export function MarsWeatherBrief({ origin, destination, mode, compact = false }: { origin: ScienceTarget; destination: ScienceTarget; mode: 'walk' | 'rover' | 'air'; compact?: boolean }) {
   const from = estimateMarsWeather(origin.localPosition, mode)
   const to = estimateMarsWeather(destination.localPosition, mode)
   const warnings = [...new Set([...from.warnings, ...to.warnings])]
   return <section className={`weather-brief ${compact ? 'compact' : ''}`} aria-label="Mars environmental outlook">
-    <header><div><span className="weather-source-badge">MODEL ESTIMATE</span><strong>Route weather outlook</strong></div><small>Location-aware · not live</small></header>
+    <header><div><span className="weather-source-badge">MODEL ESTIMATE</span><strong>Route weather outlook <SourceInfo label={`${weatherMethod}. ${observationContext}`} href="https://pds-atmospheres.nmsu.edu/data_and_services/atmospheres_data/PERSEVERANCE/meda_old.html" /></strong></div><small>Location-aware · not live</small></header>
     <div className="weather-locations"><WeatherLocation label="FROM" name={origin.name} weather={from} /><WeatherLocation label="TO" name={destination.name} weather={to} /></div>
     {warnings.length > 0 && <div className="weather-warnings">{warnings.slice(0, compact ? 2 : 4).map((warning) => <span key={warning}><AlertTriangle size={11} />{warning}</span>)}</div>}
-    {!compact && <footer><span>{weatherMethod}</span><a href="https://pds-atmospheres.nmsu.edu/data_and_services/atmospheres_data/PERSEVERANCE/meda_old.html" target="_blank" rel="noreferrer">{observationContext}</a></footer>}
+    {!compact && <footer><span>Hover or focus the information icon for the source and method.</span></footer>}
   </section>
 }
 

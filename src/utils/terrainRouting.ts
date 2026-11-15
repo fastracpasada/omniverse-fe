@@ -1,4 +1,5 @@
 import dem from '../data/jezeroDem.json'
+import { SAFETY_LIMITS, slopeRisk } from './safetyThresholds'
 
 export type SurfaceMode = 'walk' | 'rover'
 export type RouteProfile = 'safe' | 'fast'
@@ -12,6 +13,8 @@ export interface TerrainRouteResult {
   elevationGainM: number
   maximumSlopeDeg: number
   averageSlopeDeg: number
+  minimumHazardClearanceM: number
+  hazardExposureM: number
   reason?: string
 }
 
@@ -60,7 +63,7 @@ export function inspectTerrain(point: Point) {
     if (neighbor == null) continue
     maximumSlopeDeg = Math.max(maximumSlopeDeg, Math.atan2(Math.abs(neighbor - elevationM), Math.hypot(dx * stepX, dy * stepY)) * 180 / Math.PI)
   }
-  return { elevationM, slopeDeg: maximumSlopeDeg, classification: maximumSlopeDeg <= 5 ? 'LOW' : maximumSlopeDeg <= 10 ? 'MODERATE' : maximumSlopeDeg <= 15 ? 'HIGH' : 'EXCLUDED' }
+  return { elevationM, slopeDeg: maximumSlopeDeg, classification: slopeRisk(maximumSlopeDeg) }
 }
 
 class MinHeap {
@@ -73,15 +76,15 @@ export function planTerrainRoute(origin: Point, destination: Point, mode: Surfac
   if (!isWithinTerrainCoverage(origin) || !isWithinTerrainCoverage(destination)) return emptyResult('outside_coverage', 'One or both endpoints are outside the processed DEM coverage.')
   const start = gridIndex(origin)
   const goal = gridIndex(destination)
-  if (start === goal) return { status: 'ok', points: [origin, destination], distanceM: Math.hypot(destination[0] - origin[0], destination[1] - origin[1]), elevationGainM: 0, maximumSlopeDeg: 0, averageSlopeDeg: 0 }
+  if (start === goal) return { status: 'ok', points: [origin, destination], distanceM: Math.hypot(destination[0] - origin[0], destination[1] - origin[1]), elevationGainM: 0, maximumSlopeDeg: 0, averageSlopeDeg: 0, minimumHazardClearanceM: minimumHazardClearance([origin, destination]), hazardExposureM: hazardExposure([origin, destination]) }
   if (elevations[start] == null || elevations[goal] == null) return emptyResult('no_route', 'An endpoint is located on terrain with no elevation data.')
   const costs = new Float64Array(width * height).fill(Infinity)
   const previous = new Int32Array(width * height).fill(-1)
   const queue = new MinHeap()
   costs[start] = 0
   queue.push([0, start])
-  const maxSlope = mode === 'walk' ? 24 : 16
-  const slopeWeight = profile === 'fast' ? .2 : mode === 'walk' ? 3.2 : 7
+  const maxSlope = SAFETY_LIMITS.surfaceMaxSlopeDeg
+  const slopeWeight = profile === 'fast' ? .08 : mode === 'walk' ? 9 : 14
   const directions = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]]
 
   while (queue.values.length) {
@@ -101,7 +104,8 @@ export function planTerrainRoute(origin: Point, destination: Point, mode: Surfac
       const slope = Math.atan2(elevationDelta, distance) * 180 / Math.PI
       const point = gridPoint(next)
       if (slope > maxSlope || pointInPolygon(point)) continue
-      const hazardBuffer = profile === 'fast' ? 1 : Math.hypot(point[0] - 3350, point[1] - 3000) < (mode === 'rover' ? 2600 : 1900) ? 2.5 : 1
+      const clearance = hazardClearanceAt(point)
+      const hazardBuffer = profile === 'fast' ? 1 : clearance < 350 ? 18 : clearance < 900 ? 8 : clearance < 1800 ? 3.5 : 1
       const moveCost = distance * (1 + (slope / maxSlope) ** 2 * slopeWeight) * hazardBuffer
       const nextCost = costs[index] + moveCost
       if (nextCost >= costs[next]) continue
@@ -122,7 +126,7 @@ export function planTerrainRoute(origin: Point, destination: Point, mode: Surfac
 
 export function terrainRoute(origin: Point, destination: Point, mode: SurfaceMode, profile: RouteProfile = 'safe'): Point[] { return planTerrainRoute(origin, destination, mode, profile).points }
 
-function emptyResult(status: 'no_route' | 'outside_coverage', reason: string): TerrainRouteResult { return { status, points: [], distanceM: 0, elevationGainM: 0, maximumSlopeDeg: 0, averageSlopeDeg: 0, reason } }
+function emptyResult(status: 'no_route' | 'outside_coverage', reason: string): TerrainRouteResult { return { status, points: [], distanceM: 0, elevationGainM: 0, maximumSlopeDeg: 0, averageSlopeDeg: 0, minimumHazardClearanceM: 0, hazardExposureM: 0, reason } }
 
 function routeMetrics(points: Point[], sampledPoints: Point[] = points): TerrainRouteResult {
   let distanceM = 0; let elevationGainM = 0; let maximumSlopeDeg = 0; let slopeTotal = 0
@@ -134,7 +138,40 @@ function routeMetrics(points: Point[], sampledPoints: Point[] = points): Terrain
     const slope = Math.atan2(Math.abs(delta), Math.max(1, distance)) * 180 / Math.PI
     distanceM += distance; elevationGainM += Math.max(0, delta); maximumSlopeDeg = Math.max(maximumSlopeDeg, slope); slopeTotal += slope
   }
-  return { status: 'ok', points, distanceM, elevationGainM, maximumSlopeDeg, averageSlopeDeg: sampledPoints.length > 1 ? slopeTotal / (sampledPoints.length - 1) : 0 }
+  return { status: 'ok', points, distanceM, elevationGainM, maximumSlopeDeg, averageSlopeDeg: sampledPoints.length > 1 ? slopeTotal / (sampledPoints.length - 1) : 0, minimumHazardClearanceM: minimumHazardClearance(sampledPoints), hazardExposureM: hazardExposure(sampledPoints) }
+}
+
+function minimumHazardClearance(points: Point[]) {
+  let minimum = Infinity
+  for (const point of points) {
+    if (pointInPolygon(point)) return 0
+    for (let index = 0; index < hazard.length; index++) minimum = Math.min(minimum, pointToSegmentDistance(point, hazard[index], hazard[(index + 1) % hazard.length]))
+  }
+  return Number.isFinite(minimum) ? minimum : 0
+}
+
+function hazardExposure(points: Point[]) {
+  let exposureM = 0
+  for (let index = 1; index < points.length; index++) {
+    const from = points[index - 1]; const to = points[index]
+    const midpoint: Point = [(from[0] + to[0]) / 2, (from[1] + to[1]) / 2]
+    if (hazardClearanceAt(midpoint) < 1200) exposureM += Math.hypot(to[0] - from[0], to[1] - from[1])
+  }
+  return exposureM
+}
+
+function hazardClearanceAt(point: Point) {
+  if (pointInPolygon(point)) return 0
+  let minimum = Infinity
+  for (let index = 0; index < hazard.length; index++) minimum = Math.min(minimum, pointToSegmentDistance(point, hazard[index], hazard[(index + 1) % hazard.length]))
+  return minimum
+}
+
+function pointToSegmentDistance([px, py]: Point, [ax, ay]: Point, [bx, by]: Point) {
+  const dx = bx - ax; const dy = by - ay
+  const lengthSquared = dx * dx + dy * dy
+  const t = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSquared))
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy))
 }
 
 function simplify(points: Point[], tolerance: number) {
